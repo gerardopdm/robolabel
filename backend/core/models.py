@@ -1,0 +1,262 @@
+"""Modelos de dominio RoboLabel (multiempresa, proyectos, grupos, imágenes, anotaciones, versiones)."""
+from django.conf import settings
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.db import models
+
+
+class Company(models.Model):
+    name = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "companies"
+
+    def __str__(self):
+        return self.name
+
+
+class UserManager(BaseUserManager):
+    def create_user(self, email, password=None, **extra_fields):
+        if not email:
+            raise ValueError("El email es obligatorio")
+        email = self.normalize_email(email)
+        user = self.model(email=email, **extra_fields)
+        user.set_password(password)
+        user.save(using=self._db)
+        return user
+
+    def create_superuser(self, email, password=None, **extra_fields):
+        extra_fields.setdefault("is_staff", True)
+        extra_fields.setdefault("is_superuser", True)
+        extra_fields.setdefault("is_active", True)
+        if extra_fields.get("company_id") is None:
+            company, _ = Company.objects.get_or_create(name="Sistema")
+            extra_fields["company"] = company
+        if not extra_fields.get("role"):
+            extra_fields["role"] = User.Role.ADMIN
+        return self.create_user(email, password, **extra_fields)
+
+
+class User(AbstractBaseUser, PermissionsMixin):
+    class Role(models.TextChoices):
+        ADMIN = "admin", "Administrador"
+        EDITOR = "editor", "Editor"
+        VIEWER = "viewer", "Visualizador"
+
+    email = models.EmailField(unique=True, max_length=254)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="users")
+    role = models.CharField(max_length=32, choices=Role.choices, default=Role.EDITOR)
+    first_name = models.CharField(max_length=150, blank=True)
+    last_name = models.CharField(max_length=150, blank=True)
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_login_at = models.DateTimeField(null=True, blank=True)
+
+    objects = UserManager()
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS: list[str] = []
+
+    class Meta:
+        ordering = ["email"]
+
+    def __str__(self):
+        return self.email
+
+
+class Project(models.Model):
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="projects")
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    task_type = models.CharField(max_length=64, default="object_detection")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="projects_created",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="projects_updated",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-updated_at", "-id"]
+        indexes = [
+            models.Index(fields=["company", "deleted_at"]),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class ImageGroup(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="groups")
+    name = models.CharField(max_length=255)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        indexes = [
+            models.Index(fields=["project", "deleted_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.project.name} / {self.name}"
+
+
+class LabelClass(models.Model):
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="label_classes")
+    name = models.CharField(max_length=255)
+    color_hex = models.CharField(max_length=7, blank=True, default="#3B82F6")
+    sort_index = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_index", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "name"], name="uniq_label_class_per_project"),
+        ]
+
+    def __str__(self):
+        return f"{self.name}"
+
+
+class ProjectImage(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        IN_PROGRESS = "in_progress", "En progreso"
+        COMPLETED = "completed", "Completada"
+
+    group = models.ForeignKey(ImageGroup, on_delete=models.CASCADE, related_name="images")
+    storage_path = models.CharField(max_length=512)
+    original_filename = models.CharField(max_length=255)
+    mime_type = models.CharField(max_length=64)
+    file_size_bytes = models.BigIntegerField()
+    width_px = models.IntegerField()
+    height_px = models.IntegerField()
+    status = models.CharField(
+        max_length=32,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    discarded_for_dataset = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Si es True, la imagen no se incluye al generar exportaciones ZIP / dataset de entrenamiento.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="images_uploaded",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="images_updated",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+        indexes = [
+            models.Index(fields=["group", "status"]),
+        ]
+
+    @property
+    def project(self):
+        return self.group.project
+
+
+class Annotation(models.Model):
+    image = models.ForeignKey(ProjectImage, on_delete=models.CASCADE, related_name="annotations")
+    label_class = models.ForeignKey(LabelClass, on_delete=models.CASCADE, related_name="annotations")
+    x = models.DecimalField(max_digits=12, decimal_places=4)
+    y = models.DecimalField(max_digits=12, decimal_places=4)
+    width = models.DecimalField(max_digits=12, decimal_places=4)
+    height = models.DecimalField(max_digits=12, decimal_places=4)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="annotations_created",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="annotations_updated",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
+class DatasetVersion(models.Model):
+    class ArtifactStatus(models.TextChoices):
+        PENDING = "pending", "Pendiente"
+        READY = "ready", "Listo"
+        FAILED = "failed", "Error"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="dataset_versions")
+    name = models.CharField(max_length=255)
+    notes = models.TextField(blank=True)
+    artifact_status = models.CharField(
+        max_length=32,
+        choices=ArtifactStatus.choices,
+        default=ArtifactStatus.PENDING,
+    )
+    artifact_storage_path = models.CharField(max_length=512, blank=True)
+    artifact_size_bytes = models.BigIntegerField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="dataset_versions_created",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class DatasetVersionImage(models.Model):
+    dataset_version = models.ForeignKey(
+        DatasetVersion,
+        on_delete=models.CASCADE,
+        related_name="version_images",
+    )
+    project_image = models.ForeignKey(
+        ProjectImage,
+        on_delete=models.CASCADE,
+        related_name="version_memberships",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dataset_version", "project_image"],
+                name="uniq_version_image_membership",
+            ),
+        ]

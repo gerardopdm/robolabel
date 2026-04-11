@@ -1,0 +1,99 @@
+<!-- 
+    Base Design System Reference Components
+    Use these snippets to maintain consistency in New Screens.
+-->
+
+<!-- 1. PAGE HEADER -->
+<div class="flex items-center justify-between mb-8">
+    <div>
+        <h1 class="text-3xl font-bold text-slate-800">Nombre de la Pantalla</h1>
+        <p class="text-slate-600 mt-1">Breve descripción de la funcionalidad de esta sección.</p>
+    </div>
+    <div class="flex gap-3">
+        <button
+            class="bg-white text-slate-600 px-4 py-2 rounded-lg font-medium border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm">
+            <i class="fas fa-download mr-2"></i>Exportar
+        </button>
+        <button
+            class="bg-sky-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-sky-700 transition-colors shadow-sm">
+            <i class="fas fa-plus mr-2"></i>Nuevo Elemento
+        </button>
+    </div>
+</div>
+
+<!-- 2. DATA TABLE / LIST CARD -->
+<div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+    <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+        <h3 class="font-bold text-slate-700">Registros Recientes</h3>
+        <div class="relative">
+            <input type="text" placeholder="Buscar..."
+                class="pl-9 pr-4 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 outline-none">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs"></i>
+        </div>
+    </div>
+    <div class="overflow-x-auto">
+        <table class="w-full text-left">
+            <thead class="bg-slate-50 text-slate-500 text-xs font-semibold uppercase tracking-wider">
+                <tr>
+                    <th class="px-6 py-3">Nombre</th>
+                    <th class="px-6 py-3">Estado</th>
+                    <th class="px-6 py-3">Fecha</th>
+                    <th class="px-6 py-3 text-right">Acciones</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100">
+                <tr class="hover:bg-slate-50 transition-colors group">
+                    <td class="px-6 py-4">
+                        <div class="flex items-center">
+                            <div
+                                class="w-8 h-8 rounded-full bg-sky-100 text-sky-600 flex items-center justify-center font-bold text-xs mr-3">
+                                JD</div>
+                            <span class="text-slate-700 font-medium">John Doe</span>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span
+                            class="px-2 py-1 bg-emerald-50 text-emerald-700 text-xs rounded-full font-medium border border-emerald-100">Completado</span>
+                    </td>
+                    <td class="px-6 py-4 text-slate-500 text-sm">12 Feb, 2024</td>
+                    <td class="px-6 py-4 text-right">
+                        <button class="text-slate-400 hover:text-sky-600 transition-colors p-1"><i
+                                class="fas fa-edit"></i></button>
+                        <button class="text-slate-400 hover:text-red-600 transition-colors p-1 ml-2"><i
+                                class="fas fa-trash"></i></button>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 3. MODAL WIZARD STEPS -->
+<div class="flex items-center justify-center gap-4 py-4 border-b border-slate-100">
+    <!-- Step Active -->
+    <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-full bg-sky-600 text-white flex items-center justify-center text-sm font-bold">1
+        </div>
+        <span class="text-sm font-semibold text-slate-800">Info</span>
+    </div>
+    <div class="w-12 h-px bg-slate-200"></div>
+    <!-- Step Pending -->
+    <div class="flex items-center gap-2 opacity-50">
+        <div
+            class="w-8 h-8 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center text-sm font-bold">
+            2</div>
+        <span class="text-sm font-medium text-slate-500">Detalles</span>
+    </div>
+</div>
+
+<!-- 4. INFO BADGES -->
+<div class="flex gap-2">
+    <span
+        class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-sky-100 text-sky-800 border border-sky-200">Info</span>
+    <span
+        class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800 border border-emerald-200">Success</span>
+    <span
+        class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-200">Warning</span>
+    <span
+        class="px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">Error</span>
+</div>

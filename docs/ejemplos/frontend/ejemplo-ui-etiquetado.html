@@ -1,0 +1,998 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RoboLabel — Etiquetado</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <style>
+    /* Tokens: .agent/skills/design_system/resources/variables.css */
+    :root {
+      --color-slate-50: #f8fafc;
+      --color-slate-100: #f1f5f9;
+      --color-slate-200: #e2e8f0;
+      --color-slate-300: #cbd5e1;
+      --color-slate-400: #94a3b8;
+      --color-slate-500: #64748b;
+      --color-slate-600: #475569;
+      --color-slate-700: #334155;
+      --color-slate-800: #1e293b;
+      --color-sky-50: #f0f9ff;
+      --color-sky-100: #e0f2fe;
+      --color-sky-200: #bae6fd;
+      --color-sky-500: #0ea5e9;
+      --color-sky-600: #0284c7;
+      --color-sky-700: #0369a1;
+      --color-sky-800: #075985;
+      --color-error: #ef4444;
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+      --radius-lg: 0.5rem;
+      --radius-xl: 0.75rem;
+      --font-primary: "Inter", system-ui, -apple-system, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body.app {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font-primary);
+      font-size: 0.875rem;
+      background: var(--color-slate-50);
+      color: var(--color-slate-700);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .app-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 0.75rem 1.25rem;
+      padding: 1rem 1.25rem;
+      background: #fff;
+      border-bottom: 1px solid var(--color-slate-200);
+      box-shadow: var(--shadow-sm);
+    }
+    .app-header__brand { min-width: 12rem; }
+    .app-header__brand h1 {
+      margin: 0;
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: var(--color-slate-800);
+      letter-spacing: -0.02em;
+    }
+    .app-header__subtitle {
+      margin: 0.25rem 0 0;
+      font-size: 0.8125rem;
+      color: var(--color-slate-500);
+      font-weight: 400;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      flex: 1;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+    .toolbar label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--color-slate-500);
+      margin-right: 0.25rem;
+    }
+    .toolbar__field {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .input,
+    select.input {
+      font: inherit;
+      font-size: 0.8125rem;
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--color-slate-300);
+      background: #fff;
+      color: var(--color-slate-700);
+      padding: 0.4rem 0.65rem;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .input:focus,
+    select.input:focus {
+      outline: none;
+      border-color: var(--color-sky-500);
+      box-shadow: 0 0 0 2px var(--color-sky-200);
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      font: inherit;
+      font-size: 0.8125rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-radius: var(--radius-lg);
+      padding: 0.4rem 0.75rem;
+      border: 1px solid var(--color-slate-200);
+      background: #fff;
+      color: var(--color-slate-600);
+      box-shadow: var(--shadow-sm);
+      transition: background 0.2s, border-color 0.2s, color 0.2s;
+    }
+    .btn:hover:not(:disabled) {
+      background: var(--color-slate-50);
+      border-color: var(--color-slate-300);
+    }
+    .btn--primary {
+      background: var(--color-sky-600);
+      border-color: var(--color-sky-600);
+      color: #fff;
+    }
+    .btn--primary:hover:not(:disabled) {
+      background: var(--color-sky-700);
+      border-color: var(--color-sky-700);
+    }
+    .btn--icon { padding: 0.4rem 0.55rem; min-width: 2.25rem; }
+    .btn.is-active {
+      background: var(--color-sky-100);
+      border-color: var(--color-sky-300);
+      color: var(--color-sky-700);
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .toolbar__divider {
+      width: 1px;
+      height: 1.25rem;
+      background: var(--color-slate-200);
+      margin: 0 0.15rem;
+    }
+
+    /* Colores de clase en options + estado cerrado (también vía JS). */
+    select.input.select--class {
+      font-weight: 500;
+    }
+
+    .app-main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr minmax(280px, 320px);
+      min-height: 0;
+    }
+
+    .workspace {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      padding: 1rem;
+      gap: 0;
+    }
+    .canvas-shell {
+      flex: 1;
+      min-height: 0;
+      background: #fff;
+      border: 1px solid var(--color-slate-200);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-sm);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .canvas-wrap {
+      position: relative;
+      flex: 1;
+      min-height: 200px;
+      overflow: hidden;
+      background: var(--color-slate-100);
+      cursor: crosshair;
+    }
+    .canvas-wrap.panning { cursor: grab; }
+    .canvas-wrap.panning:active { cursor: grabbing; }
+
+    .world {
+      position: absolute;
+      transform-origin: 0 0;
+      will-change: transform;
+    }
+    .world img {
+      display: block;
+      max-width: none;
+      user-select: none;
+      pointer-events: none;
+      vertical-align: top;
+    }
+
+    .overlay-svg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      pointer-events: none;
+    }
+    .overlay-svg.interactive { pointer-events: all; }
+
+    .box-rect { vector-effect: non-scaling-stroke; }
+    .box-rect.selected {
+      filter: drop-shadow(0 0 4px rgba(14, 165, 233, 0.35));
+    }
+    .handle {
+      fill: #fff;
+      stroke-width: 2;
+      cursor: nwse-resize;
+      pointer-events: all;
+    }
+    .handle.nw, .handle.se { cursor: nwse-resize; }
+    .handle.ne, .handle.sw { cursor: nesw-resize; }
+    .handle.n, .handle.s { cursor: ns-resize; }
+    .handle.e, .handle.w { cursor: ew-resize; }
+
+    /* Sidebar (design system: sky-100 + border) */
+    .app-sidebar {
+      background: var(--color-sky-100);
+      border-left: 1px solid var(--color-slate-200);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .app-sidebar__title {
+      margin: 0;
+      padding: 1rem 1rem 0.75rem;
+      font-size: 0.6875rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--color-sky-800);
+      border-bottom: 1px solid var(--color-sky-200);
+    }
+    .class-row {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--color-sky-200);
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .class-row label {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--color-slate-600);
+    }
+    .class-row .input,
+    .class-row select.input { width: 100%; }
+
+    .anno-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem;
+    }
+    .anno-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.6rem 0.65rem;
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      font-size: 0.8125rem;
+      border: 1px solid var(--color-slate-200);
+      background: #fff;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 0.5rem;
+      transition: box-shadow 0.2s, transform 0.2s, border-color 0.2s;
+    }
+    .anno-item:hover {
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+    .anno-item.active {
+      border-color: var(--color-sky-500);
+      box-shadow: var(--shadow-md);
+      background: #fff;
+    }
+    .anno-item .swatch {
+      width: 10px;
+      height: 10px;
+      border-radius: 3px;
+      flex-shrink: 0;
+      border: 1px solid rgb(0 0 0 / 0.08);
+    }
+    .anno-item .meta { flex: 1; min-width: 0; }
+    .anno-item .name {
+      font-weight: 600;
+      color: var(--color-slate-800);
+    }
+    .anno-item .coords {
+      font-size: 0.6875rem;
+      color: var(--color-slate-500);
+      font-variant-numeric: tabular-nums;
+    }
+    .anno-item button.del {
+      padding: 0.25rem 0.45rem;
+      font-size: 0.75rem;
+      color: var(--color-slate-400);
+      border: none;
+      background: transparent;
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      transition: color 0.2s, background 0.2s;
+    }
+    .anno-item button.del:hover {
+      color: var(--color-error);
+      background: rgb(239 68 68 / 0.08);
+    }
+
+    .empty-state {
+      padding: 1.5rem 1rem;
+      text-align: center;
+      color: var(--color-slate-400);
+      font-size: 0.8125rem;
+      line-height: 1.5;
+    }
+
+    .status-bar {
+      padding: 0.6rem 1rem;
+      font-size: 0.6875rem;
+      color: var(--color-slate-500);
+      border-top: 1px solid var(--color-sky-200);
+      background: rgb(255 255 255 / 0.5);
+    }
+
+    @media (max-width: 900px) {
+      .app-main { grid-template-columns: 1fr; }
+      .app-sidebar {
+        border-left: none;
+        border-top: 1px solid var(--color-slate-200);
+        max-height: 240px;
+      }
+    }
+  </style>
+</head>
+<body class="app">
+  <header class="app-header">
+    <div class="app-header__brand">
+      <h1>Etiquetado</h1>
+      <p class="app-header__subtitle">Dibuja y edita cajas sobre la imagen del proyecto.</p>
+    </div>
+    <div class="toolbar">
+      <div class="toolbar__field">
+        <label for="classSelect">Clase (nueva caja)</label>
+        <select id="classSelect" class="input select--class"></select>
+      </div>
+      <button type="button" class="btn" id="btnNewClass" title="Añadir clase al proyecto">
+        <i class="fas fa-tag" aria-hidden="true"></i> Clase
+      </button>
+      <span class="toolbar__divider" aria-hidden="true"></span>
+      <button type="button" class="btn btn--icon" id="zoomOut" title="Alejar" aria-label="Alejar"><i class="fas fa-minus"></i></button>
+      <button type="button" class="btn btn--icon" id="zoomIn" title="Acercar" aria-label="Acercar"><i class="fas fa-plus"></i></button>
+      <button type="button" class="btn" id="zoomReset">100%</button>
+      <button type="button" class="btn" id="btnPan" title="Mayús + arrastrar para mover la vista">
+        <i class="fas fa-hand" aria-hidden="true"></i> Vista
+      </button>
+    </div>
+  </header>
+
+  <main class="app-main">
+    <section class="workspace" aria-label="Lienzo de etiquetado">
+      <div class="canvas-shell">
+        <div class="canvas-wrap" id="canvasWrap">
+          <div class="world" id="world">
+            <img id="labelImage" alt="Imagen de ejemplo" crossorigin="anonymous" />
+            <svg class="overlay-svg interactive" id="overlay"></svg>
+          </div>
+        </div>
+      </div>
+    </section>
+    <aside class="app-sidebar">
+      <h2 class="app-sidebar__title">Objetos en esta imagen</h2>
+      <div class="class-row">
+        <label for="newClassName">Nueva clase rápida</label>
+        <input type="text" id="newClassName" class="input" placeholder="ej. tornillo, arandela…" />
+      </div>
+      <div class="class-row" id="editClassRow" hidden>
+        <label for="editClassSelect">Clase de la caja seleccionada</label>
+        <select id="editClassSelect" class="input select--class"></select>
+      </div>
+      <div class="anno-list" id="annoList"></div>
+      <div class="status-bar" id="statusBar">Listo.</div>
+    </aside>
+  </main>
+
+  <script>
+(function () {
+  /** Colores hex bien diferenciados (una clase = un color estable). */
+  const CLASS_COLOR_PALETTE = [
+    "#22c55e", "#3b82f6", "#eab308", "#a855f7", "#ef4444", "#06b6d4",
+    "#f97316", "#ec4899", "#84cc16", "#6366f1", "#14b8a6", "#f43f5e",
+    "#eab3c8", "#0ea5e9", "#d946ef", "#65a30d",
+  ];
+
+  const CLASSES = [
+    { id: "c1", name: "pieza", color: CLASS_COLOR_PALETTE[0] },
+    { id: "c2", name: "defecto", color: CLASS_COLOR_PALETTE[1] },
+    { id: "c3", name: "fondo", color: CLASS_COLOR_PALETTE[2] },
+  ];
+
+  function hexToRgba(hex, alpha) {
+    if (!hex || hex[0] !== "#" || hex.length !== 7) return "rgba(128,128,128," + alpha + ")";
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+  }
+
+  function colorForNewClass() {
+    return CLASS_COLOR_PALETTE[CLASSES.length % CLASS_COLOR_PALETTE.length];
+  }
+
+  /** Texto legible sobre fondo hex (opciones y estado cerrado del select). */
+  function contrastTextForBg(hex) {
+    if (!hex || hex[0] !== "#" || hex.length !== 7) return "#0f172a";
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    return L > 0.55 ? "#0f172a" : "#ffffff";
+  }
+
+  function styleClassOption(option, cls) {
+    option.style.backgroundColor = cls.color;
+    option.style.color = contrastTextForBg(cls.color);
+  }
+
+  function applyClosedSelectClassTheme(selectEl) {
+    const cls = classById(selectEl.value);
+    if (!cls) return;
+    selectEl.style.backgroundColor = cls.color;
+    selectEl.style.color = contrastTextForBg(cls.color);
+    selectEl.style.borderColor = cls.color;
+  }
+
+  function resetSelectClassTheme(selectEl) {
+    selectEl.style.backgroundColor = "";
+    selectEl.style.color = "";
+    selectEl.style.borderColor = "";
+  }
+
+  let boxes = [];
+  let selectedId = null;
+  let scale = 1;
+  let panX = 0;
+  let panY = 0;
+  let panMode = false;
+
+  let drawStart = null;
+  let dragKind = null;
+  let dragBoxId = null;
+  let resizeHandle = null;
+  let lastPointer = { x: 0, y: 0 };
+  let resizeStartBox = null;
+  let resizePtr0 = null;
+  let moveStart = null;
+
+  const img = document.getElementById("labelImage");
+  const world = document.getElementById("world");
+  const wrap = document.getElementById("canvasWrap");
+  const overlay = document.getElementById("overlay");
+  const classSelect = document.getElementById("classSelect");
+  const annoList = document.getElementById("annoList");
+  const statusBar = document.getElementById("statusBar");
+  const editClassRow = document.getElementById("editClassRow");
+  const editClassSelect = document.getElementById("editClassSelect");
+
+  function uid() {
+    return "b_" + Math.random().toString(36).slice(2, 11);
+  }
+
+  function syncClassSelect() {
+    classSelect.innerHTML = "";
+    CLASSES.forEach((c) => {
+      const o = document.createElement("option");
+      o.value = c.id;
+      o.textContent = c.name;
+      styleClassOption(o, c);
+      classSelect.appendChild(o);
+    });
+    applyClosedSelectClassTheme(classSelect);
+  }
+
+  function classById(id) {
+    return CLASSES.find((c) => c.id === id) || CLASSES[0];
+  }
+
+  function imageToWorld(clientX, clientY) {
+    const rect = world.getBoundingClientRect();
+    const x = (clientX - rect.left) / scale;
+    const y = (clientY - rect.top) / scale;
+    return { x, y };
+  }
+
+  function clampBox(b, iw, ih) {
+    let x = Math.max(0, Math.min(b.x, iw));
+    let y = Math.max(0, Math.min(b.y, ih));
+    let w = Math.max(4, b.w);
+    let h = Math.max(4, b.h);
+    if (x + w > iw) w = iw - x;
+    if (y + h > ih) h = ih - y;
+    return { x, y, w, h };
+  }
+
+  function updateWorldTransform() {
+    world.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+  }
+
+  function setSvgSize() {
+    const w = img.naturalWidth || img.width;
+    const h = img.naturalHeight || img.height;
+    overlay.setAttribute("width", w);
+    overlay.setAttribute("height", h);
+    overlay.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  }
+
+  function renderOverlay() {
+    const iw = img.naturalWidth || 800;
+    const ih = img.naturalHeight || 600;
+    overlay.innerHTML = "";
+    const NS = "http://www.w3.org/2000/svg";
+
+    boxes.forEach((b) => {
+      const cls = classById(b.classId);
+      const g = document.createElementNS(NS, "g");
+      g.dataset.id = b.id;
+
+      const rect = document.createElementNS(NS, "rect");
+      rect.setAttribute("class", "box-rect" + (b.id === selectedId ? " selected" : ""));
+      rect.setAttribute("x", b.x);
+      rect.setAttribute("y", b.y);
+      rect.setAttribute("width", b.w);
+      rect.setAttribute("height", b.h);
+      rect.setAttribute("stroke", cls.color);
+      rect.setAttribute("stroke-width", b.id === selectedId ? "3" : "2");
+      rect.setAttribute("fill", hexToRgba(cls.color, 0.2));
+      g.appendChild(rect);
+
+      if (b.id === selectedId) {
+        const hx = b.x, hy = b.y, hw = b.w, hh = b.h;
+        const mids = [
+          { name: "nw", cx: hx, cy: hy },
+          { name: "n", cx: hx + hw / 2, cy: hy },
+          { name: "ne", cx: hx + hw, cy: hy },
+          { name: "e", cx: hx + hw, cy: hy + hh / 2 },
+          { name: "se", cx: hx + hw, cy: hy + hh },
+          { name: "s", cx: hx + hw / 2, cy: hy + hh },
+          { name: "sw", cx: hx, cy: hy + hh },
+          { name: "w", cx: hx, cy: hy + hh / 2 },
+        ];
+        mids.forEach((m) => {
+          const c = document.createElementNS(NS, "circle");
+          c.setAttribute("class", "handle " + m.name);
+          c.setAttribute("cx", m.cx);
+          c.setAttribute("cy", m.cy);
+          c.setAttribute("r", 6);
+          c.setAttribute("stroke", cls.color);
+          c.dataset.handle = m.name;
+          g.appendChild(c);
+        });
+      }
+      overlay.appendChild(g);
+    });
+
+    annoList.innerHTML = "";
+    if (boxes.length === 0) {
+      annoList.innerHTML =
+        '<div class="empty-state">No hay cajas.<br/>Arrastra sobre la imagen para dibujar la primera.</div>';
+      editClassRow.hidden = true;
+      resetSelectClassTheme(editClassSelect);
+      return;
+    }
+    boxes.forEach((b) => {
+      const cls = classById(b.classId);
+      const div = document.createElement("div");
+      div.className = "anno-item" + (b.id === selectedId ? " active" : "");
+      div.dataset.id = b.id;
+      div.innerHTML =
+        '<span class="swatch" style="background:' +
+        cls.color +
+        '"></span>' +
+        '<div class="meta"><div class="name">' +
+        escapeHtml(cls.name) +
+        '</div><div class="coords">' +
+        Math.round(b.x) +
+        ", " +
+        Math.round(b.y) +
+        " · " +
+        Math.round(b.w) +
+        "×" +
+        Math.round(b.h) +
+        "</div></div>" +
+        '<button type="button" class="del" data-del="' +
+        b.id +
+        '" title="Eliminar"><i class="fas fa-trash" aria-hidden="true"></i></button>';
+      annoList.appendChild(div);
+    });
+
+    if (selectedId) {
+      editClassRow.hidden = false;
+      editClassSelect.innerHTML = "";
+      CLASSES.forEach((c) => {
+        const o = document.createElement("option");
+        o.value = c.id;
+        o.textContent = c.name;
+        styleClassOption(o, c);
+        editClassSelect.appendChild(o);
+      });
+      const sb = boxes.find((x) => x.id === selectedId);
+      if (sb) editClassSelect.value = sb.classId;
+      applyClosedSelectClassTheme(editClassSelect);
+    } else {
+      editClassRow.hidden = true;
+      resetSelectClassTheme(editClassSelect);
+    }
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function hitTestHandle(clientX, clientY) {
+    if (!selectedId) return null;
+    const p = imageToWorld(clientX, clientY);
+    const b = boxes.find((x) => x.id === selectedId);
+    if (!b) return null;
+    const hx = b.x,
+      hy = b.y,
+      hw = b.w,
+      hh = b.h;
+    const pts = [
+      { name: "nw", cx: hx, cy: hy },
+      { name: "n", cx: hx + hw / 2, cy: hy },
+      { name: "ne", cx: hx + hw, cy: hy },
+      { name: "e", cx: hx + hw, cy: hy + hh / 2 },
+      { name: "se", cx: hx + hw, cy: hy + hh },
+      { name: "s", cx: hx + hw / 2, cy: hy + hh },
+      { name: "sw", cx: hx, cy: hy + hh },
+      { name: "w", cx: hx, cy: hy + hh / 2 },
+    ];
+    const r = 8 / scale;
+    for (const pt of pts) {
+      if (Math.hypot(p.x - pt.cx, p.y - pt.cy) <= r) return pt.name;
+    }
+    return null;
+  }
+
+  function hitTestBox(clientX, clientY) {
+    const p = imageToWorld(clientX, clientY);
+    for (let i = boxes.length - 1; i >= 0; i--) {
+      const b = boxes[i];
+      if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return b.id;
+    }
+    return null;
+  }
+
+  function onPointerDown(e) {
+    if (e.button === 1) {
+      e.preventDefault();
+      dragKind = "pan";
+      lastPointer = { x: e.clientX, y: e.clientY };
+      return;
+    }
+    const shift = e.shiftKey;
+    if (panMode || shift) {
+      dragKind = "pan";
+      lastPointer = { x: e.clientX, y: e.clientY };
+      wrap.classList.add("panning");
+      return;
+    }
+
+    const handle = hitTestHandle(e.clientX, e.clientY);
+    if (handle && selectedId) {
+      dragKind = "resize";
+      resizeHandle = handle;
+      dragBoxId = selectedId;
+      const b = boxes.find((x) => x.id === selectedId);
+      resizeStartBox = { x: b.x, y: b.y, w: b.w, h: b.h };
+      resizePtr0 = imageToWorld(e.clientX, e.clientY);
+      e.preventDefault();
+      return;
+    }
+
+    const hit = hitTestBox(e.clientX, e.clientY);
+    if (hit) {
+      selectedId = hit;
+      dragKind = "move";
+      dragBoxId = hit;
+      const b = boxes.find((x) => x.id === hit);
+      const p = imageToWorld(e.clientX, e.clientY);
+      moveStart = { bx: b.x, by: b.y, px: p.x, py: p.y };
+      renderOverlay();
+      e.preventDefault();
+      return;
+    }
+
+    selectedId = null;
+    dragKind = "draw";
+    const p = imageToWorld(e.clientX, e.clientY);
+    drawStart = { x: p.x, y: p.y, classId: classSelect.value };
+    renderOverlay();
+  }
+
+  function resizeFromHandle(start, handle, dx, dy) {
+    let x = start.x;
+    let y = start.y;
+    let w = start.w;
+    let h = start.h;
+    if (handle.includes("e")) w = Math.max(4, start.w + dx);
+    if (handle.includes("w")) {
+      const nw = Math.max(4, start.w - dx);
+      x = start.x + (start.w - nw);
+      w = nw;
+    }
+    if (handle.includes("s")) h = Math.max(4, start.h + dy);
+    if (handle.includes("n")) {
+      const nh = Math.max(4, start.h - dy);
+      y = start.y + (start.h - nh);
+      h = nh;
+    }
+    return { x, y, w, h };
+  }
+
+  function onPointerMove(e) {
+    if (dragKind === "pan") {
+      panX += e.clientX - lastPointer.x;
+      panY += e.clientY - lastPointer.y;
+      lastPointer = { x: e.clientX, y: e.clientY };
+      updateWorldTransform();
+      return;
+    }
+    const iw = img.naturalWidth || 800;
+    const ih = img.naturalHeight || 600;
+
+    if (dragKind === "move" && dragBoxId && moveStart) {
+      const p = imageToWorld(e.clientX, e.clientY);
+      const b = boxes.find((x) => x.id === dragBoxId);
+      if (!b) return;
+      const dx = p.x - moveStart.px;
+      const dy = p.y - moveStart.py;
+      const nb = clampBox(
+        { x: moveStart.bx + dx, y: moveStart.by + dy, w: b.w, h: b.h },
+        iw,
+        ih
+      );
+      b.x = nb.x;
+      b.y = nb.y;
+      renderOverlay();
+      return;
+    }
+
+    if (dragKind === "resize" && dragBoxId && resizeHandle && resizeStartBox && resizePtr0) {
+      const p = imageToWorld(e.clientX, e.clientY);
+      const rdx = p.x - resizePtr0.x;
+      const rdy = p.y - resizePtr0.y;
+      const b = boxes.find((x) => x.id === dragBoxId);
+      if (!b) return;
+      const nb = resizeFromHandle(resizeStartBox, resizeHandle, rdx, rdy);
+      const cl = clampBox(nb, iw, ih);
+      b.x = cl.x;
+      b.y = cl.y;
+      b.w = cl.w;
+      b.h = cl.h;
+      renderOverlay();
+      return;
+    }
+
+    if (dragKind === "draw" && drawStart) {
+      const p = imageToWorld(e.clientX, e.clientY);
+      const x = Math.min(drawStart.x, p.x);
+      const y = Math.min(drawStart.y, p.y);
+      const w = Math.abs(p.x - drawStart.x);
+      const h = Math.abs(p.y - drawStart.y);
+      window._preview = { x, y, w, h, classId: drawStart.classId };
+      renderOverlay();
+      const NS = "http://www.w3.org/2000/svg";
+      if (window._preview && w > 2 && h > 2) {
+        const cls = classById(window._preview.classId);
+        const rect = document.createElementNS(NS, "rect");
+        rect.setAttribute("class", "box-rect");
+        rect.setAttribute("x", x);
+        rect.setAttribute("y", y);
+        rect.setAttribute("width", w);
+        rect.setAttribute("height", h);
+        rect.setAttribute("stroke", cls.color);
+        rect.setAttribute("stroke-width", "2");
+        rect.setAttribute("fill", hexToRgba(cls.color, 0.25));
+        rect.setAttribute("stroke-dasharray", "6 4");
+        overlay.appendChild(rect);
+      }
+    }
+  }
+
+  function onPointerUp(e) {
+    const hadDrag = dragKind !== null;
+
+    if (dragKind === "draw" && drawStart && window._preview) {
+      const pr = window._preview;
+      if (pr.w >= 8 && pr.h >= 8) {
+        boxes.push({
+          id: uid(),
+          x: pr.x,
+          y: pr.y,
+          w: pr.w,
+          h: pr.h,
+          classId: pr.classId,
+        });
+        selectedId = boxes[boxes.length - 1].id;
+      }
+      window._preview = null;
+    }
+
+    dragKind = null;
+    drawStart = null;
+    dragBoxId = null;
+    resizeHandle = null;
+    resizeStartBox = null;
+    resizePtr0 = null;
+    moveStart = null;
+    wrap.classList.remove("panning");
+    lastPointer = { x: 0, y: 0 };
+
+    if (hadDrag) {
+      renderOverlay();
+      statusBar.textContent =
+        boxes.length + " objeto(s) · zoom " + Math.round(scale * 100) + "%";
+    }
+  }
+
+  img.addEventListener("load", () => {
+    setSvgSize();
+    panX = 0;
+    panY = 0;
+    scale = Math.min(
+      (wrap.clientWidth - 40) / img.naturalWidth,
+      (wrap.clientHeight - 40) / img.naturalHeight,
+      1
+    );
+    updateWorldTransform();
+    renderOverlay();
+  });
+
+  wrap.addEventListener("mousedown", onPointerDown);
+  window.addEventListener("mousemove", onPointerMove);
+  window.addEventListener("mouseup", onPointerUp);
+
+  wrap.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      const old = scale;
+      scale = Math.min(4, Math.max(0.2, scale + delta));
+      const rect = wrap.getBoundingClientRect();
+      const cx = e.clientX - rect.left;
+      const cy = e.clientY - rect.top;
+      panX = cx - ((cx - panX) * scale) / old;
+      panY = cy - ((cy - panY) * scale) / old;
+      updateWorldTransform();
+      statusBar.textContent =
+        boxes.length + " objeto(s) · zoom " + Math.round(scale * 100) + "%";
+    },
+    { passive: false }
+  );
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Delete" || e.key === "Backspace") {
+      const ae = document.activeElement && document.activeElement.tagName;
+      if (
+        selectedId &&
+        ae !== "INPUT" &&
+        ae !== "SELECT" &&
+        ae !== "TEXTAREA"
+      ) {
+        boxes = boxes.filter((b) => b.id !== selectedId);
+        selectedId = null;
+        renderOverlay();
+        statusBar.textContent = "Caja eliminada.";
+      }
+    }
+  });
+
+  annoList.addEventListener("click", (e) => {
+    const el = e.target.closest ? e.target : e.target.parentElement;
+    if (!el) return;
+
+    const del = el.closest("[data-del]");
+    if (del) {
+      const id = del.getAttribute("data-del");
+      boxes = boxes.filter((b) => b.id !== id);
+      if (selectedId === id) selectedId = null;
+      renderOverlay();
+      statusBar.textContent = "Caja eliminada.";
+      return;
+    }
+
+    const item = el.closest(".anno-item");
+    if (item) {
+      selectedId = item.dataset.id;
+      renderOverlay();
+    }
+  });
+
+  document.getElementById("zoomIn").addEventListener("click", () => {
+    scale = Math.min(4, scale * 1.15);
+    updateWorldTransform();
+    statusBar.textContent =
+      boxes.length + " objeto(s) · zoom " + Math.round(scale * 100) + "%";
+  });
+  document.getElementById("zoomOut").addEventListener("click", () => {
+    scale = Math.max(0.2, scale / 1.15);
+    updateWorldTransform();
+    statusBar.textContent =
+      boxes.length + " objeto(s) · zoom " + Math.round(scale * 100) + "%";
+  });
+  document.getElementById("zoomReset").addEventListener("click", () => {
+    scale = Math.min(
+      (wrap.clientWidth - 40) / (img.naturalWidth || 800),
+      (wrap.clientHeight - 40) / (img.naturalHeight || 600),
+      1
+    );
+    panX = panY = 0;
+    updateWorldTransform();
+    statusBar.textContent =
+      boxes.length + " objeto(s) · zoom " + Math.round(scale * 100) + "%";
+  });
+
+  document.getElementById("btnPan").addEventListener("click", () => {
+    panMode = !panMode;
+    document.getElementById("btnPan").classList.toggle("is-active", panMode);
+    wrap.style.cursor = panMode ? "grab" : "crosshair";
+  });
+
+  document.getElementById("btnNewClass").addEventListener("click", () => {
+    const name = prompt("Nombre de la clase:");
+    if (!name || !name.trim()) return;
+    const id = "c_" + Math.random().toString(36).slice(2, 8);
+    CLASSES.push({ id, name: name.trim(), color: colorForNewClass() });
+    syncClassSelect();
+    classSelect.value = id;
+    applyClosedSelectClassTheme(classSelect);
+  });
+
+  const quickInput = document.getElementById("newClassName");
+  quickInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      const name = quickInput.value.trim();
+      if (!name) return;
+      const id = "c_" + Math.random().toString(36).slice(2, 8);
+      CLASSES.push({ id, name, color: colorForNewClass() });
+      syncClassSelect();
+      classSelect.value = id;
+      applyClosedSelectClassTheme(classSelect);
+      quickInput.value = "";
+    }
+  });
+
+  classSelect.addEventListener("change", () => {
+    applyClosedSelectClassTheme(classSelect);
+  });
+
+  editClassSelect.addEventListener("change", () => {
+    if (!selectedId) return;
+    const b = boxes.find((x) => x.id === selectedId);
+    if (b) b.classId = editClassSelect.value;
+    renderOverlay();
+  });
+
+  syncClassSelect();
+  img.src =
+    "https://picsum.photos/seed/robolabel-demo/960/640";
+  img.draggable = false;
+
+  statusBar.textContent = "Cargando imagen de ejemplo…";
+})();
+  </script>
+</body>
+</html>

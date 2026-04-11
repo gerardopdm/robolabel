@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RoboLabel — Vista de imágenes (ejemplo)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: { sans: ['Inter', 'system-ui', 'sans-serif'] },
+          colors: {
+            slate: {
+              50: '#f8fafc', 100: '#f1f5f9', 200: '#e2e8f0', 300: '#cbd5e1',
+              400: '#94a3b8', 500: '#64748b', 600: '#475569', 700: '#334155',
+              800: '#1e293b', 900: '#0f172a',
+            },
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    :root {
+      --color-slate-50: #f8fafc;
+      --color-slate-100: #f1f5f9;
+      --color-slate-200: #e2e8f0;
+      --color-slate-300: #cbd5e1;
+      --color-slate-400: #94a3b8;
+      --color-slate-500: #64748b;
+      --color-slate-600: #475569;
+      --color-slate-700: #334155;
+      --color-slate-800: #1e293b;
+      --color-sky-50: #f0f9ff;
+      --color-sky-100: #e0f2fe;
+      --color-sky-200: #bae6fd;
+      --color-sky-900: #0c4a6e;
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    }
+
+    .filter-btn {
+      color: var(--color-slate-600, #475569);
+      background-color: transparent;
+    }
+
+    .filter-btn:hover {
+      background-color: var(--color-slate-100, #f1f5f9);
+      color: var(--color-slate-800, #1e293b);
+    }
+
+    .filter-btn-active {
+      background-color: var(--color-sky-100, #e0f2fe);
+      color: var(--color-sky-900, #0c4a6e);
+      border: 1px solid var(--color-sky-200, #bae6fd);
+      box-shadow: var(--shadow-sm, 0 1px 2px 0 rgb(0 0 0 / 0.05));
+    }
+
+    .image-card {
+      background-color: #fff;
+      border: 1px solid var(--color-slate-200, #e2e8f0);
+      border-radius: 0.75rem;
+      box-shadow: var(--shadow-sm, 0 1px 2px 0 rgb(0 0 0 / 0.05));
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+    }
+
+    .image-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md, 0 4px 6px -1px rgb(0 0 0 / 0.1));
+    }
+
+    .image-card--pending .image-card__thumb-wrap {
+      background: linear-gradient(135deg, var(--color-slate-50, #f8fafc) 0%, var(--color-sky-50, #f0f9ff) 100%);
+      border: 2px dashed var(--color-slate-300, #cbd5e1);
+    }
+
+    .image-card--labeled .image-card__thumb-wrap {
+      border: 1px solid var(--color-slate-200, #e2e8f0);
+    }
+
+    .image-card__thumb {
+      aspect-ratio: 4 / 3;
+      object-fit: cover;
+      width: 100%;
+      display: block;
+    }
+
+    .image-card__thumb-placeholder {
+      aspect-ratio: 4 / 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--color-slate-400, #94a3b8);
+      font-size: 2.5rem;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-slate-50 font-sans text-slate-700 antialiased">
+  <div class="flex min-h-screen">
+    <aside class="w-64 shrink-0 border-r border-slate-200 bg-sky-100 flex flex-col">
+      <div class="p-6 border-b border-sky-200/80">
+        <div class="flex items-center gap-2 text-slate-800">
+          <span class="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500 text-white shadow-sm">
+            <i class="fas fa-tags text-sm"></i>
+          </span>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wide text-sky-800/80">RoboLabel</p>
+            <p class="text-sm font-bold">Etiquetado</p>
+          </div>
+        </div>
+      </div>
+      <nav class="flex-1 p-3 space-y-1">
+        <a href="#" class="active-link flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-800 bg-sky-200/20 border-l-4 border-sky-500">
+          <i class="fas fa-images w-5 text-sky-600"></i>
+          Galería
+        </a>
+        <a href="#" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-sky-200/60 transition-all duration-200">
+          <i class="fas fa-folder-open w-5 text-slate-500"></i>
+          Proyectos
+        </a>
+        <a href="#" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 hover:bg-sky-200/60 transition-all duration-200">
+          <i class="fas fa-chart-line w-5 text-slate-500"></i>
+          Estadísticas
+        </a>
+      </nav>
+      <div class="p-4 border-t border-sky-200/80 text-xs text-slate-500">
+        Ejemplo UI — <span class="text-slate-600">docs/ejemplos/frontend/ejemplo-galeria-imagenes-etiquetado.html</span>
+      </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col min-w-0">
+      <header class="bg-white border-b border-slate-200 px-8 py-6">
+        <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 class="text-3xl font-bold text-slate-800">Imágenes del lote</h1>
+            <p class="text-slate-600 mt-1">Visualización de imágenes ya etiquetadas y pendientes de etiquetar.</p>
+          </div>
+          <div class="flex flex-wrap gap-3">
+            <button type="button" class="inline-flex items-center gap-2 bg-white text-slate-600 px-4 py-2 rounded-lg font-medium border border-slate-200 hover:bg-slate-50 transition-colors shadow-sm">
+              <i class="fas fa-download"></i>
+              Exportar
+            </button>
+            <button type="button" class="inline-flex items-center gap-2 bg-sky-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-sky-700 transition-colors shadow-sm">
+              <i class="fas fa-plus"></i>
+              Subir imágenes
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div class="rounded-xl border border-slate-200 bg-slate-50/50 p-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-slate-500">Total</p>
+            <p class="mt-1 text-2xl font-bold text-slate-800" id="stat-total">12</p>
+          </div>
+          <div class="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-emerald-700">Etiquetadas</p>
+            <p class="mt-1 text-2xl font-bold text-emerald-800" id="stat-labeled">7</p>
+          </div>
+          <div class="rounded-xl border border-amber-100 bg-amber-50/40 p-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-amber-800">Pendientes</p>
+            <p class="mt-1 text-2xl font-bold text-amber-900" id="stat-pending">5</p>
+          </div>
+          <div class="rounded-xl border border-sky-100 bg-sky-50/50 p-4">
+            <p class="text-xs font-semibold uppercase tracking-wider text-sky-800">Progreso</p>
+            <p class="mt-1 text-2xl font-bold text-sky-900" id="stat-progress">58%</p>
+          </div>
+        </div>
+      </header>
+
+      <div class="px-8 py-4 border-b border-slate-100 bg-white/80 backdrop-blur-sm flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-2" role="tablist" aria-label="Filtrar por estado">
+          <button type="button" data-filter="all" class="filter-btn filter-btn-active px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200">
+            Todas
+          </button>
+          <button type="button" data-filter="labeled" class="filter-btn px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border border-transparent">
+            <i class="fas fa-check-circle mr-1.5 text-emerald-600"></i>
+            Etiquetadas
+          </button>
+          <button type="button" data-filter="pending" class="filter-btn px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 border border-transparent">
+            <i class="fas fa-clock mr-1.5 text-amber-600"></i>
+            Pendientes
+          </button>
+        </div>
+        <div class="relative max-w-xs w-full">
+          <input type="search" id="search-input" placeholder="Buscar por nombre…" autocomplete="off"
+            class="w-full pl-9 pr-4 py-2 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-transparent outline-none transition-shadow" />
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm pointer-events-none"></i>
+        </div>
+      </div>
+
+      <div class="flex-1 p-8 overflow-auto">
+        <div id="image-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"></div>
+        <div id="empty-state" class="hidden text-center py-16 px-4">
+          <div class="inline-flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400 mb-4">
+            <i class="fas fa-image text-2xl"></i>
+          </div>
+          <p class="text-slate-500 font-medium">No hay imágenes que coincidan con el filtro o la búsqueda.</p>
+          <p class="text-slate-400 text-sm mt-1">Prueba con otro término o cambia el filtro.</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const samples = [
+        { id: 1, name: 'frame_001.jpg', labeled: true, boxes: 3, updatedAt: '2026-04-10' },
+        { id: 2, name: 'frame_002.jpg', labeled: false, boxes: 0, updatedAt: '—' },
+        { id: 3, name: 'frame_003.jpg', labeled: true, boxes: 1, updatedAt: '2026-04-09' },
+        { id: 4, name: 'frame_004.jpg', labeled: true, boxes: 5, updatedAt: '2026-04-08' },
+        { id: 5, name: 'frame_005.jpg', labeled: false, boxes: 0, updatedAt: '—' },
+        { id: 6, name: 'frame_006.jpg', labeled: true, boxes: 2, updatedAt: '2026-04-07' },
+        { id: 7, name: 'frame_007.jpg', labeled: false, boxes: 0, updatedAt: '—' },
+        { id: 8, name: 'frame_008.jpg', labeled: true, boxes: 4, updatedAt: '2026-04-06' },
+        { id: 9, name: 'frame_009.jpg', labeled: false, boxes: 0, updatedAt: '—' },
+        { id: 10, name: 'frame_010.jpg', labeled: true, boxes: 2, updatedAt: '2026-04-05' },
+        { id: 11, name: 'frame_011.jpg', labeled: false, boxes: 0, updatedAt: '—' },
+        { id: 12, name: 'frame_012.jpg', labeled: true, boxes: 1, updatedAt: '2026-04-04' },
+      ];
+
+      let activeFilter = 'all';
+      let searchQuery = '';
+
+      const grid = document.getElementById('image-grid');
+      const emptyState = document.getElementById('empty-state');
+      const searchInput = document.getElementById('search-input');
+      const filterButtons = document.querySelectorAll('[data-filter]');
+
+      function thumbUrl(id, labeled) {
+        const seed = id + (labeled ? 100 : 0);
+        return 'https://picsum.photos/seed/robolabel' + seed + '/640/480';
+      }
+
+      function updateStats(list) {
+        const labeled = list.filter(function (i) { return i.labeled; }).length;
+        const pending = list.filter(function (i) { return !i.labeled; }).length;
+        const total = list.length;
+        const pct = total ? Math.round((labeled / total) * 100) : 0;
+        document.getElementById('stat-total').textContent = String(total);
+        document.getElementById('stat-labeled').textContent = String(labeled);
+        document.getElementById('stat-pending').textContent = String(pending);
+        document.getElementById('stat-progress').textContent = pct + '%';
+      }
+
+      function matchesFilter(item) {
+        if (activeFilter === 'labeled') return item.labeled;
+        if (activeFilter === 'pending') return !item.labeled;
+        return true;
+      }
+
+      function matchesSearch(item) {
+        if (!searchQuery) return true;
+        return item.name.toLowerCase().indexOf(searchQuery) !== -1;
+      }
+
+      function escapeHtml(s) {
+        const div = document.createElement('div');
+        div.textContent = s;
+        return div.innerHTML;
+      }
+
+      function cardHtml(item) {
+        const labeled = item.labeled;
+        const cardClass = labeled ? 'image-card image-card--labeled group' : 'image-card image-card--pending group';
+        const badge = labeled
+          ? '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200">' +
+            '<i class="fas fa-check text-[10px]"></i> Etiquetada</span>'
+          : '<span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-900 border border-amber-200">' +
+            '<i class="fas fa-hourglass-half text-[10px]"></i> Pendiente</span>';
+
+        const meta = labeled
+          ? '<span class="text-slate-500"><i class="fas fa-vector-square mr-1 text-slate-400"></i>' + item.boxes + ' etiqueta' + (item.boxes === 1 ? '' : 's') + '</span>' +
+            '<span class="text-slate-400">' + item.updatedAt + '</span>'
+          : '<span class="text-amber-700/90"><i class="fas fa-pen-ruler mr-1 text-amber-600"></i>Sin etiquetas</span>' +
+            '<span class="text-slate-400">—</span>';
+
+        const thumb = labeled
+          ? '<div class="image-card__thumb-wrap relative overflow-hidden rounded-t-xl">' +
+            '<img class="image-card__thumb" src="' + thumbUrl(item.id, true) + '" alt="" loading="lazy" width="640" height="480" />' +
+            '<div class="absolute inset-0 bg-gradient-to-t from-slate-900/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-end justify-end p-3">' +
+            '<button type="button" class="text-white text-sm font-medium hover:text-sky-200 transition-colors">' +
+            '<i class="fas fa-expand mr-1"></i> Abrir</button></div></div>'
+          : '<div class="image-card__thumb-wrap relative overflow-hidden rounded-t-xl">' +
+            '<img class="image-card__thumb opacity-90" src="' + thumbUrl(item.id, false) + '" alt="" loading="lazy" width="640" height="480" />' +
+            '<div class="absolute inset-0 flex items-center justify-center pointer-events-none">' +
+            '<span class="rounded-full bg-white/90 text-amber-800 text-xs font-semibold px-3 py-1.5 shadow-sm border border-amber-200">' +
+            '<i class="fas fa-hand-pointer mr-1"></i> Por etiquetar</span></div></div>';
+
+        return (
+          '<article class="' + cardClass + '" data-id="' + item.id + '" data-labeled="' + labeled + '">' +
+          thumb +
+          '<div class="p-4">' +
+          '<div class="flex items-start justify-between gap-2 mb-2">' +
+          '<h3 class="font-semibold text-slate-800 text-sm truncate group-hover:text-sky-700 transition-colors" title="' + escapeHtml(item.name) + '">' +
+          escapeHtml(item.name) + '</h3>' + badge + '</div>' +
+          '<div class="flex items-center justify-between text-xs">' + meta + '</div></div></article>'
+        );
+      }
+
+      function setActiveFilterButton() {
+        filterButtons.forEach(function (btn) {
+          const f = btn.getAttribute('data-filter');
+          const active = f === activeFilter;
+          btn.classList.toggle('filter-btn-active', active);
+          btn.classList.toggle('border', active);
+          btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+      }
+
+      function render() {
+        const filtered = samples.filter(function (item) {
+          return matchesFilter(item) && matchesSearch(item);
+        });
+        updateStats(samples);
+        if (filtered.length === 0) {
+          grid.innerHTML = '';
+          emptyState.classList.remove('hidden');
+          return;
+        }
+        emptyState.classList.add('hidden');
+        grid.innerHTML = filtered.map(cardHtml).join('');
+      }
+
+      filterButtons.forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          activeFilter = btn.getAttribute('data-filter') || 'all';
+          setActiveFilterButton();
+          render();
+        });
+      });
+
+      searchInput.addEventListener('input', function () {
+        searchQuery = searchInput.value.trim().toLowerCase();
+        render();
+      });
+
+      setActiveFilterButton();
+      render();
+    })();
+  </script>
+</body>
+</html>

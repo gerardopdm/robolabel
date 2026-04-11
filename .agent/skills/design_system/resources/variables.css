@@ -1,0 +1,94 @@
+/* Modern Web Design Tokens */
+:root {
+    /* Colors - Slate (Neutrals) */
+    --color-slate-50: #f8fafc;
+    --color-slate-100: #f1f5f9;
+    --color-slate-200: #e2e8f0;
+    --color-slate-300: #cbd5e1;
+    --color-slate-400: #94a3b8;
+    --color-slate-500: #64748b;
+    --color-slate-600: #475569;
+    --color-slate-700: #334155;
+    --color-slate-800: #1e293b;
+    --color-slate-900: #0f172a;
+
+    /* Colors - Sky (Brand/Accent) */
+    --color-sky-50: #f0f9ff;
+    --color-sky-100: #e0f2fe;
+    --color-sky-200: #bae6fd;
+    --color-sky-300: #7dd3fc;
+    --color-sky-400: #38bdf8;
+    --color-sky-500: #0ea5e9;
+    --color-sky-600: #0284c7;
+    --color-sky-700: #0369a1;
+    --color-sky-800: #075985;
+    --color-sky-900: #0c4a6e;
+
+    /* Colors - State */
+    --color-error: #ef4444;
+    /* red-500 */
+    --color-warning: #f59e0b;
+    /* amber-500 */
+    --color-success: #10b981;
+    /* emerald-500 */
+    --color-info: #3b82f6;
+    /* blue-500 */
+
+    /* Typography */
+    --font-primary: 'Inter', system-ui, -apple-system, sans-serif;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+
+    /* Borders */
+    --radius-lg: 0.5rem;
+    /* rounded-lg */
+    --radius-xl: 0.75rem;
+    /* rounded-xl */
+    --radius-2xl: 1rem;
+    /* rounded-2xl */
+}
+
+/* Base Styles Utility */
+.crm-card {
+    background-color: white;
+    border: 1px solid var(--color-slate-200);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.crm-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.crm-input {
+    width: 100%;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--color-slate-300);
+    border-radius: var(--radius-lg);
+    transition: all 0.2s;
+}
+
+.crm-input:focus {
+    outline: none;
+    border-color: var(--color-sky-500);
+    box-shadow: 0 0 0 2px var(--color-sky-200);
+}
+
+.crm-btn-primary {
+    background-color: var(--color-sky-600);
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: var(--radius-lg);
+    font-weight: 500;
+    transition: background-color 0.2s;
+}
+
+.crm-btn-primary:hover {
+    background-color: var(--color-sky-700);
+}
