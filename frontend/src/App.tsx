@@ -13,6 +13,7 @@ import ProjectEditPage from './pages/ProjectEditPage'
 import ProjectHubPage from './pages/ProjectHubPage'
 import ProjectNewPage from './pages/ProjectNewPage'
 import ProjectsPage from './pages/ProjectsPage'
+import UsersPage from './pages/UsersPage'
 
 function PrivateLayout() {
   const { access, loading } = useAuth()
@@ -35,6 +36,7 @@ export default function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<PrivateLayout />}>
         <Route path="/projects" element={<ProjectsPage />} />
+        <Route path="/users" element={<UsersPage />} />
         <Route path="/projects/new" element={<ProjectNewPage />} />
         <Route path="/projects/:projectId" element={<ProjectHubPage />} />
         <Route path="/projects/:projectId/edit" element={<ProjectEditPage />} />

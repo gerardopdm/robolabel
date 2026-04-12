@@ -8,7 +8,13 @@ type Stats = {
   completed_images: number
   pending_images: number
   in_progress_images: number
-  groups: { id: number; name: string; total_images: number; completed_images: number }[]
+  groups: {
+    id: number
+    name: string
+    total_images: number
+    completed_images: number
+    images_by_class?: { id: number; name: string; color_hex: string; image_count: number }[]
+  }[]
 }
 
 function SkeletonBlock({ className = '' }: { className?: string }) {
@@ -167,7 +173,8 @@ export default function ProjectHubPage() {
   const [description, setDescription] = useState('')
   const [loading, setLoading] = useState(true)
   const [exportOpen, setExportOpen] = useState(false)
-  const canEdit = user?.role === 'admin' || user?.role === 'editor'
+  const canExportDataset = Boolean(user?.is_administrador || user?.is_asignador || user?.is_validador)
+  const canEditProject = Boolean(user?.is_administrador)
 
   useEffect(() => {
     if (!projectId) return
@@ -224,15 +231,17 @@ export default function ProjectHubPage() {
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setExportOpen(true)}
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
-          >
-            {IconDownload}
-            <span className="hidden sm:inline">Exportar ZIP</span>
-          </button>
-          {canEdit && (
+          {canExportDataset && (
+            <button
+              type="button"
+              onClick={() => setExportOpen(true)}
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
+            >
+              {IconDownload}
+              <span className="hidden sm:inline">Exportar ZIP</span>
+            </button>
+          )}
+          {canEditProject && (
             <Link
               to={`/projects/${projectId}/edit`}
               className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition-colors hover:bg-slate-50"
@@ -355,6 +364,27 @@ export default function ProjectHubPage() {
                     <div className="mt-2">
                       <ProgressBar completed={g.completed_images} total={g.total_images} />
                     </div>
+                    {g.images_by_class && g.images_by_class.length > 0 && (
+                      <div className="mt-2">
+                        <p className="text-xs text-slate-500">Imágenes con al menos una etiqueta por clase:</p>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {g.images_by_class.map((c) => (
+                            <span
+                              key={c.id}
+                              className="inline-flex max-w-full items-center gap-1 rounded-md border border-slate-100 bg-slate-50/80 px-2 py-0.5 text-xs text-slate-600"
+                              title={`${c.name}: imágenes que contienen al menos una caja de esta clase`}
+                            >
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full ring-1 ring-black/5"
+                                style={{ backgroundColor: c.color_hex }}
+                              />
+                              <span className="truncate font-medium text-slate-700">{c.name}</span>
+                              <span className="tabular-nums text-slate-500">{c.image_count}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <span className="text-slate-400 transition-colors group-hover:text-sky-500">
                     {IconChevron}

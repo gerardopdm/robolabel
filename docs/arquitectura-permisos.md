@@ -156,7 +156,9 @@ Las celdas “Según política” deben cerrarse en el PRD o en tickets (p. ej. 
 
 ## 8. Filtrado de querysets (etiquetador)
 
-Para un usuario que **solo** actúa como etiquetador (sin otros roles que amplíen la vista), el listado de `ProjectImage` debe restringirse a imágenes cuyo **grupo** tenga una `GroupAssignment` con `labeler=request.user`.
+**Vista global** (todos los grupos e imágenes del proyecto en la empresa): `is_administrador`, `is_asignador`, o `is_validador` **sin** `is_etiquetador` (validador que no etiqueta ve todo el proyecto para validar).
+
+**Vista por asignación:** si el usuario tiene `is_etiquetador=True` y **no** es administrador ni asignador, los listados de proyectos, grupos e imágenes se restringen a filas con `GroupAssignment` para `labeler=request.user`. Esto aplica también a **etiquetador + validador**: no recibe vista global solo por ser validador; solo ve los grupos donde está asignado (cada etiquetador solo sus grupos).
 
 Ejemplo lógico:
 
@@ -166,11 +168,12 @@ qs = ProjectImage.objects.filter(
     group__project__company=user.company,
     deleted_at__isnull=True,
 )
-if user.is_etiquetador and not (user.is_administrador or user.is_asignador or user.is_validador):
+global_view = user.is_administrador or user.is_asignador or (
+    user.is_validador and not user.is_etiquetador
+)
+if user.is_etiquetador and not global_view:
     qs = qs.filter(group__assignments__labeler=user)
 ```
-
-Si un usuario combina roles (p. ej. etiquetador + validador), la unión de permisos debe definirse explícitamente: típicamente **unión** de conjuntos (ve todo lo de validador y además lo asignado como etiquetador).
 
 ---
 

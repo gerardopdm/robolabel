@@ -18,7 +18,7 @@ export default function ClassesPage() {
   const [items, setItems] = useState<Lc[]>([])
   const [name, setName] = useState('')
   const [color, setColor] = useState(() => pickDistinctColor([]))
-  const canEdit = user?.role === 'admin' || user?.role === 'editor'
+  const canEdit = Boolean(user?.is_administrador || user?.is_asignador)
 
   function load() {
     if (!projectId) return
@@ -51,6 +51,8 @@ export default function ClassesPage() {
     load()
   }
 
+  const totalAnnotations = items.reduce((sum, c) => sum + (c.annotation_count ?? 0), 0)
+
   return (
     <div>
       <nav className="mb-4 text-sm text-slate-500">
@@ -76,24 +78,83 @@ export default function ClassesPage() {
           </button>
         </form>
       )}
-      <ul className="mt-6 space-y-2">
-        {items.map((c) => (
-          <li key={c.id} className="flex items-center justify-between rounded-lg border bg-white px-3 py-2">
-            <div className="flex items-center gap-2">
-              <span className="h-4 w-4 rounded" style={{ backgroundColor: c.color_hex }} />
-              <span className="font-medium">{c.name}</span>
-              <span className="text-xs text-slate-400">sort {c.sort_index}</span>
-              {c.annotation_count != null && (
-                <span className="text-xs text-slate-500">{c.annotation_count} anotaciones</span>
-              )}
-            </div>
-            {canEdit && (
-              <button type="button" onClick={() => remove(c.id)} className="text-sm text-red-600">
-                Eliminar
-              </button>
-            )}
-          </li>
-        ))}
+      {items.length > 0 && (
+        <p className="mt-6 max-w-2xl text-sm text-slate-500">
+          Cada barra muestra la proporción de anotaciones de esa clase respecto al total del proyecto (
+          <span className="font-medium text-slate-600 tabular-nums">{totalAnnotations}</span> en total).
+        </p>
+      )}
+      <ul className="mt-3 space-y-3">
+        {items.map((c) => {
+          const count = c.annotation_count ?? 0
+          const pct = totalAnnotations > 0 ? (count / totalAnnotations) * 100 : 0
+          const pctLabel = totalAnnotations > 0 ? pct.toFixed(1) : '0'
+          return (
+            <li
+              key={c.id}
+              className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+              role="group"
+              aria-label={`Clase ${c.name}`}
+            >
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <span
+                    className="mt-0.5 h-10 w-10 shrink-0 rounded-lg shadow-inner ring-1 ring-black/5"
+                    style={{ backgroundColor: c.color_hex }}
+                    aria-hidden
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                      <span className="text-base font-semibold text-slate-800">{c.name}</span>
+                      <span className="text-xs text-slate-400">orden {c.sort_index}</span>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">
+                      <span className="tabular-nums font-medium text-slate-700">{count}</span>
+                      <span className="text-slate-500">
+                        {' '}
+                        {count === 1 ? 'anotación' : 'anotaciones'}
+                        {totalAnnotations > 0 && (
+                          <>
+                            {' '}
+                            · <span className="tabular-nums">{pctLabel}%</span> del total
+                          </>
+                        )}
+                      </span>
+                    </p>
+                    <div className="mt-3">
+                      <div
+                        className="h-3 w-full overflow-hidden rounded-full bg-slate-100"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(pct * 10) / 10}
+                        aria-label={`${pctLabel} por ciento de todas las anotaciones`}
+                      >
+                        <div
+                          className="h-full min-w-0 rounded-full transition-[width] duration-500 ease-out"
+                          style={{
+                            width: `${pct}%`,
+                            backgroundColor: c.color_hex,
+                            minWidth: count > 0 && pct > 0 && pct < 1 ? '4px' : count > 0 ? undefined : 0,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {canEdit && (
+                  <button
+                    type="button"
+                    onClick={() => remove(c.id)}
+                    className="shrink-0 self-end text-sm font-medium text-red-600 transition-colors hover:text-red-700 sm:self-start"
+                  >
+                    Eliminar
+                  </button>
+                )}
+              </div>
+            </li>
+          )
+        })}
       </ul>
     </div>
   )

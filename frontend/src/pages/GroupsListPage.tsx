@@ -21,7 +21,7 @@ export default function GroupsListPage() {
   const [busyId, setBusyId] = useState<number | null>(null)
   const [hideTarget, setHideTarget] = useState<{ id: number; name: string } | null>(null)
   const [hidePending, setHidePending] = useState(false)
-  const canEdit = user?.role === 'admin' || user?.role === 'editor'
+  const canEdit = Boolean(user?.is_administrador || user?.is_asignador)
 
   function load() {
     if (!projectId) return

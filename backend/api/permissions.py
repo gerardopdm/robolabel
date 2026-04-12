@@ -1,7 +1,5 @@
-"""Permisos por rol (PRD §4.2)."""
+"""Permisos por rol (docs/arquitectura-permisos.md)."""
 from rest_framework.permissions import BasePermission, SAFE_METHODS
-
-from core.models import User
 
 
 class IsCompanyMember(BasePermission):
@@ -11,19 +9,58 @@ class IsCompanyMember(BasePermission):
         return bool(request.user and request.user.is_authenticated and getattr(request.user, "company_id", None))
 
 
-class IsAdminOrEditor(BasePermission):
-    """Crear/editar/eliminar solo admin o editor."""
+class IsAdministrador(BasePermission):
+    """Solo administrador de producto (is_administrador)."""
+
+    def has_permission(self, request, view):
+        return bool(
+            request.user
+            and request.user.is_authenticated
+            and getattr(request.user, "is_administrador", False),
+        )
+
+
+class IsAsignadorOrAdministrador(BasePermission):
+    """Subida de imágenes, grupos, clases, asignaciones y versiones de dataset."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        u = request.user
+        return bool(getattr(u, "is_administrador", False) or getattr(u, "is_asignador", False))
+
+
+class CanExportDataset(BasePermission):
+    """Export ZIP / descargar versiones: administrador, asignador o validador (no etiquetador puro)."""
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        u = request.user
+        return bool(
+            getattr(u, "is_administrador", False)
+            or getattr(u, "is_asignador", False)
+            or getattr(u, "is_validador", False),
+        )
+
+
+class ReadOrCanExport(BasePermission):
+    """GET: miembro de empresa; POST de export: CanExportDataset (usar junto a IsCompanyMember)."""
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
         if request.method in SAFE_METHODS:
-            return True
-        return request.user.role in (User.Role.ADMIN, User.Role.EDITOR)
+            return bool(getattr(request.user, "company_id", None))
+        return bool(
+            getattr(request.user, "is_administrador", False)
+            or getattr(request.user, "is_asignador", False)
+            or getattr(request.user, "is_validador", False),
+        )
 
 
-class ReadOrViewerExport(BasePermission):
-    """Lectura para todos; escritura admin/editor. Exportar: viewer también (PRD)."""
+# Compatibilidad con código que aún importe el nombre antiguo
+class IsAdminOrEditor(IsAsignadorOrAdministrador):
+    """Deprecated: usar IsAsignadorOrAdministrador."""
 
-    def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated)
+    pass

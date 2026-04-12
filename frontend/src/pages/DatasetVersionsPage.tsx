@@ -84,7 +84,7 @@ export default function DatasetVersionsPage() {
   const [onlyCompleted, setOnlyCompleted] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const canEdit = user?.role === 'admin' || user?.role === 'editor'
+  const canEdit = Boolean(user?.is_administrador || user?.is_asignador)
 
   const [groups, setGroups] = useState<Group[]>([])
   const [selectedGroupIds, setSelectedGroupIds] = useState<Set<number>>(new Set())

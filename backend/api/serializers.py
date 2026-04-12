@@ -7,6 +7,7 @@ from core.models import (
     Annotation,
     Company,
     DatasetVersion,
+    GroupAssignment,
     ImageGroup,
     LabelClass,
     Project,
@@ -31,9 +32,81 @@ class UserMeSerializer(serializers.ModelSerializer):
             "email",
             "first_name",
             "last_name",
-            "role",
+            "is_administrador",
+            "is_asignador",
+            "is_etiquetador",
+            "is_validador",
             "company",
         )
+
+
+class UserListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = (
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "is_administrador",
+            "is_asignador",
+            "is_etiquetador",
+            "is_validador",
+            "is_active",
+            "created_at",
+        )
+
+
+class UserCreateSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8, style={"input_type": "password"})
+
+    class Meta:
+        model = User
+        fields = (
+            "email",
+            "password",
+            "first_name",
+            "last_name",
+            "is_administrador",
+            "is_asignador",
+            "is_etiquetador",
+            "is_validador",
+        )
+
+    def create(self, validated_data):
+        password = validated_data.pop("password")
+        request = self.context["request"]
+        email = validated_data.pop("email")
+        return User.objects.create_user(
+            email=email,
+            password=password,
+            company=request.user.company,
+            **validated_data,
+        )
+
+
+class UserUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = (
+            "first_name",
+            "last_name",
+            "is_administrador",
+            "is_asignador",
+            "is_etiquetador",
+            "is_validador",
+            "is_active",
+        )
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        instance = self.instance
+        if request and instance and instance.pk == request.user.pk:
+            if attrs.get("is_administrador") is False and instance.is_administrador:
+                raise serializers.ValidationError(
+                    {"is_administrador": "No podés quitarte el rol de administrador a vos mismo."},
+                )
+        return attrs
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -94,6 +167,49 @@ class ImageGroupSerializer(serializers.ModelSerializer):
             deleted_at__isnull=True,
         )
         validated_data["project"] = project
+        return super().create(validated_data)
+
+
+class GroupAssignmentSerializer(serializers.ModelSerializer):
+    labeler_email = serializers.EmailField(source="labeler.email", read_only=True)
+    assigned_by_email = serializers.SerializerMethodField()
+
+    class Meta:
+        model = GroupAssignment
+        fields = (
+            "id",
+            "image_group",
+            "labeler",
+            "labeler_email",
+            "assigned_by",
+            "assigned_by_email",
+            "created_at",
+        )
+        read_only_fields = ("id", "image_group", "assigned_by", "created_at", "labeler_email", "assigned_by_email")
+
+    def get_assigned_by_email(self, obj):
+        return obj.assigned_by.email if obj.assigned_by_id else None
+
+    def validate_labeler(self, value: User):
+        if not value.is_etiquetador:
+            raise serializers.ValidationError("El usuario debe tener rol de etiquetador.")
+        request = self.context.get("request")
+        if request and value.company_id != request.user.company_id:
+            raise serializers.ValidationError("El etiquetador debe ser de la misma empresa.")
+        return value
+
+    def create(self, validated_data):
+        validated_data["assigned_by"] = self.context["request"].user
+        gid = self.context["image_group_id"]
+        from core.models import ImageGroup
+
+        group = ImageGroup.objects.get(
+            pk=gid,
+            project_id=self.context["project_id"],
+            project__company_id=self.context["request"].user.company_id,
+            deleted_at__isnull=True,
+        )
+        validated_data["image_group"] = group
         return super().create(validated_data)
 
 
@@ -159,12 +275,68 @@ class ProjectImageSerializer(serializers.ModelSerializer):
 
 
 class ProjectImageUpdateSerializer(serializers.ModelSerializer):
+    validation_comment = serializers.CharField(required=False, allow_blank=True, write_only=True)
+
     class Meta:
         model = ProjectImage
-        fields = ("status", "discarded_for_dataset")
+        fields = ("status", "discarded_for_dataset", "validation_comment")
 
-    def validate_status(self, value):
-        return value
+    def validate(self, attrs):
+        from api.mixins import user_can_validate_image
+
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            raise serializers.ValidationError("Autenticación requerida.")
+        instance = self.instance
+        old_status = instance.status
+        new_status = attrs.get("status", old_status)
+
+        if "discarded_for_dataset" in attrs and attrs["discarded_for_dataset"] != instance.discarded_for_dataset:
+            if not (getattr(user, "is_administrador", False) or getattr(user, "is_asignador", False)):
+                raise serializers.ValidationError(
+                    {"discarded_for_dataset": "Solo administrador o asignador pueden cambiar este campo."},
+                )
+
+        if new_status == old_status:
+            return attrs
+
+        S = ProjectImage.Status
+        if getattr(user, "is_administrador", False):
+            return attrs
+
+        # Enviar a validación (etiquetador)
+        if new_status == S.PENDING_VALIDATION and old_status in (S.PENDING, S.IN_PROGRESS):
+            if not getattr(user, "is_etiquetador", False):
+                raise serializers.ValidationError({"status": "Solo un etiquetador puede enviar a validación."})
+            return attrs
+
+        # Rechazada → en progreso
+        if new_status == S.IN_PROGRESS and old_status == S.REJECTED:
+            if not getattr(user, "is_etiquetador", False):
+                raise serializers.ValidationError({"status": "Solo un etiquetador puede reabrir una imagen rechazada."})
+            return attrs
+
+        # Decisiones de validación
+        if old_status == S.PENDING_VALIDATION and new_status in (S.COMPLETED, S.REJECTED):
+            if not user_can_validate_image(user):
+                raise serializers.ValidationError({"status": "Solo un validador o administrador puede aprobar o rechazar."})
+            return attrs
+
+        # Devolver al etiquetador para corregir (sin pasar por rechazado formal)
+        if old_status == S.PENDING_VALIDATION and new_status == S.IN_PROGRESS:
+            if not user_can_validate_image(user):
+                raise serializers.ValidationError(
+                    {"status": "Solo un validador o administrador puede devolver la imagen a edición."},
+                )
+            return attrs
+
+        if old_status == S.COMPLETED and new_status == S.PENDING_VALIDATION:
+            if not user_can_validate_image(user):
+                raise serializers.ValidationError({"status": "Solo un validador o administrador puede reabrir una imagen completada."})
+            return attrs
+
+        raise serializers.ValidationError({"status": "Transición de estado no permitida."})
 
 
 class LabelClassSerializer(serializers.ModelSerializer):

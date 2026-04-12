@@ -4,8 +4,26 @@ import GalleryImagePreview, { type AnnotationPreview } from '../components/Galle
 import HideGroupModal from '../components/HideGroupModal'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
+import { apiErrorMessage } from '../utils/apiErrorMessage'
 
 type LabelClassLite = { id: number; color_hex: string }
+
+type GroupAssignmentRow = {
+  id: number
+  labeler: number
+  labeler_email: string
+  assigned_by_email: string | null
+  created_at: string
+}
+
+type UserListRow = {
+  id: number
+  email: string
+  first_name: string
+  last_name: string
+  is_etiquetador: boolean
+  is_active: boolean
+}
 
 type Img = {
   id: number
@@ -19,8 +37,24 @@ type Img = {
   annotations_preview?: AnnotationPreview[]
 }
 
-const tabs = ['all', 'completed', 'pending'] as const
+/** Orden: pendientes → validar (pendientes de validación) → validadas */
+const tabs = ['pendientes', 'validar', 'validadas'] as const
 type Tab = (typeof tabs)[number]
+
+function tabCount(
+  t: Tab,
+  c: { pendientes: number; pending_validation: number; validadas: number },
+): number {
+  if (t === 'pendientes') return c.pendientes
+  if (t === 'validadas') return c.validadas
+  return c.pending_validation
+}
+
+function tabLabel(t: Tab): string {
+  if (t === 'pendientes') return 'Pendientes'
+  if (t === 'validar') return 'Validar'
+  return 'Validadas'
+}
 
 const PAGE_SIZES = [25, 50, 75, 100, 200] as const
 type PageSizeOption = (typeof PAGE_SIZES)[number]
@@ -76,13 +110,17 @@ export default function GroupDetailPage() {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [images, setImages] = useState<Img[]>([])
-  const [tab, setTab] = useState<Tab>('all')
+  const [tab, setTab] = useState<Tab>('pendientes')
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [showAssignmentsModal, setShowAssignmentsModal] = useState(false)
+  const [showGalleryUploadModal, setShowGalleryUploadModal] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const canEdit = user?.role === 'admin' || user?.role === 'editor'
+  /** Administrador o asignador: subir/ocultar/renombrar grupo y asignar etiquetadores (no validador ni etiquetador solo). */
+  const canEdit = Boolean(user?.is_administrador || user?.is_asignador)
+  const canManageLabelerAssignments = canEdit
 
   const [pendingVideo, setPendingVideo] = useState<File | null>(null)
   const [videoFps, setVideoFps] = useState<string>('1')
@@ -92,7 +130,11 @@ export default function GroupDetailPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<PageSizeOption>(() => readGalleryPrefs().pageSize)
   const [totalCount, setTotalCount] = useState(0)
-  const [groupCounts, setGroupCounts] = useState({ all: 0, completed: 0, pending: 0 })
+  const [groupCounts, setGroupCounts] = useState({
+    pendientes: 0,
+    pending_validation: 0,
+    validadas: 0,
+  })
   const [galleryLoading, setGalleryLoading] = useState(false)
   const [density, setDensity] = useState<GalleryDensity>(() => readGalleryPrefs().density)
 
@@ -103,6 +145,33 @@ export default function GroupDetailPage() {
   const [groupActionBusy, setGroupActionBusy] = useState(false)
   const [showHideModal, setShowHideModal] = useState(false)
   const [hideModalPending, setHideModalPending] = useState(false)
+
+  const [assignments, setAssignments] = useState<GroupAssignmentRow[]>([])
+  const [assignableLabelers, setAssignableLabelers] = useState<UserListRow[]>([])
+  const [assignmentsLoading, setAssignmentsLoading] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
+  const [selectedLabelerId, setSelectedLabelerId] = useState<string>('')
+  const [assignSubmitting, setAssignSubmitting] = useState(false)
+
+  useEffect(() => {
+    if (assignError) setShowAssignmentsModal(true)
+  }, [assignError])
+
+  useEffect(() => {
+    if (uploadError) setShowGalleryUploadModal(true)
+  }, [uploadError])
+
+  useEffect(() => {
+    if (!showAssignmentsModal && !showGalleryUploadModal) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setShowAssignmentsModal(false)
+        setShowGalleryUploadModal(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [showAssignmentsModal, showGalleryUploadModal])
 
   useEffect(() => {
     if (!projectId || !groupId) return
@@ -116,6 +185,35 @@ export default function GroupDetailPage() {
         else setGroupLoadError('error')
       })
   }, [projectId, groupId])
+
+  const loadAssignmentsAndLabelers = useCallback(async () => {
+    if (!projectId || !groupId || !canManageLabelerAssignments) return
+    setAssignmentsLoading(true)
+    setAssignError(null)
+    try {
+      const [ar, ur] = await Promise.all([
+        api.get<{ results?: GroupAssignmentRow[] }>(
+          `/projects/${projectId}/groups/${groupId}/assignments/`,
+        ),
+        api.get<{ results?: UserListRow[] }>('/users/', { params: { page_size: 200 } }),
+      ])
+      const alist = ar.data.results ?? (ar.data as unknown as GroupAssignmentRow[])
+      setAssignments(Array.isArray(alist) ? alist : [])
+      const ulist = ur.data.results ?? (ur.data as unknown as UserListRow[])
+      const users = Array.isArray(ulist) ? ulist : []
+      setAssignableLabelers(users.filter((u) => u.is_etiquetador && u.is_active))
+    } catch (e) {
+      setAssignError(apiErrorMessage(e, 'No se pudieron cargar las asignaciones.'))
+      setAssignments([])
+      setAssignableLabelers([])
+    } finally {
+      setAssignmentsLoading(false)
+    }
+  }, [projectId, groupId, canManageLabelerAssignments])
+
+  useEffect(() => {
+    void loadAssignmentsAndLabelers()
+  }, [loadAssignmentsAndLabelers])
 
   useEffect(() => {
     try {
@@ -132,17 +230,27 @@ export default function GroupDetailPage() {
       setGalleryLoading(true)
       try {
         const params: Record<string, number | string> = { page: p, page_size: pageSize }
-        if (tab === 'completed') params.status = 'completed'
-        else if (tab === 'pending') params.status = 'pending'
+        if (tab === 'pendientes') params.status = 'pendientes'
+        else if (tab === 'validar') params.status = 'pending_validation'
+        else if (tab === 'validadas') params.status = 'validadas'
         const r = await api.get(`/projects/${projectId}/groups/${groupId}/images/`, { params })
         const list: Img[] = r.data.results ?? r.data
         setImages(Array.isArray(list) ? list : [])
         setTotalCount(typeof r.data.count === 'number' ? r.data.count : list.length)
         const gc = r.data.group_image_counts as
-          | { all: number; completed: number; pending: number }
+          | {
+              pendientes?: number
+              pending_validation?: number
+              validadas?: number
+              completed?: number
+            }
           | undefined
-        if (gc && typeof gc.all === 'number') {
-          setGroupCounts({ all: gc.all, completed: gc.completed, pending: gc.pending })
+        if (gc && typeof gc.pendientes === 'number') {
+          setGroupCounts({
+            pendientes: gc.pendientes,
+            pending_validation: gc.pending_validation ?? 0,
+            validadas: gc.validadas ?? gc.completed ?? 0,
+          })
         }
       } finally {
         setGalleryLoading(false)
@@ -334,6 +442,41 @@ export default function GroupDetailPage() {
     }
   }
 
+  async function addGroupAssignment(e: FormEvent) {
+    e.preventDefault()
+    if (!projectId || !groupId || !selectedLabelerId) return
+    setAssignSubmitting(true)
+    setAssignError(null)
+    try {
+      await api.post(`/projects/${projectId}/groups/${groupId}/assignments/`, {
+        labeler: Number(selectedLabelerId),
+      })
+      setSelectedLabelerId('')
+      await loadAssignmentsAndLabelers()
+    } catch (err) {
+      setAssignError(apiErrorMessage(err, 'No se pudo asignar el etiquetador.'))
+    } finally {
+      setAssignSubmitting(false)
+    }
+  }
+
+  async function removeGroupAssignment(assignmentId: number) {
+    if (!projectId || !groupId) return
+    setAssignSubmitting(true)
+    setAssignError(null)
+    try {
+      await api.delete(`/projects/${projectId}/groups/${groupId}/assignments/${assignmentId}/`)
+      await loadAssignmentsAndLabelers()
+    } catch (err) {
+      setAssignError(apiErrorMessage(err, 'No se pudo quitar la asignación.'))
+    } finally {
+      setAssignSubmitting(false)
+    }
+  }
+
+  const assignedLabelerIds = new Set(assignments.map((a) => a.labeler))
+  const labelersForSelect = assignableLabelers.filter((u) => !assignedLabelerIds.has(u.id))
+
   const nav = (
     <nav className="mb-4 text-sm text-slate-500">
       <Link to="/projects">Proyectos</Link>
@@ -430,50 +573,216 @@ export default function GroupDetailPage() {
           </div>
         )}
       </div>
-      <p className="mt-1 text-sm text-slate-500">Galería de imágenes</p>
+
+      {canManageLabelerAssignments && canEdit && (
+        <div className="mt-6 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setShowAssignmentsModal(true)}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+          >
+            Etiquetadores asignados
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowGalleryUploadModal(true)}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
+          >
+            Subir imágenes o video
+          </button>
+        </div>
+      )}
+
+      {showAssignmentsModal && canManageLabelerAssignments && canEdit && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+          role="presentation"
+          onClick={() => setShowAssignmentsModal(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="assignments-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-4">
+              <h2 id="assignments-modal-title" className="text-lg font-semibold text-slate-800">
+                Etiquetadores asignados
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowAssignmentsModal(false)}
+                className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                aria-label="Cerrar"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <p className="text-xs text-slate-500">
+                Solo los usuarios con rol de etiquetador verán este grupo si no tienen otros roles con acceso
+                global. Podés asignar varios etiquetadores al mismo grupo.
+              </p>
+              {assignError && (
+                <p className="mt-2 text-xs text-red-600" role="alert">
+                  {assignError}
+                </p>
+              )}
+              {assignmentsLoading ? (
+                <p className="mt-3 text-sm text-slate-500">Cargando asignaciones…</p>
+              ) : (
+                <>
+                  {assignments.length > 0 ? (
+                    <ul className="mt-3 divide-y divide-slate-100 rounded-lg border border-slate-100">
+                      {assignments.map((a) => (
+                        <li
+                          key={a.id}
+                          className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm"
+                        >
+                          <div>
+                            <span className="font-medium text-slate-800">{a.labeler_email}</span>
+                            {a.assigned_by_email && (
+                              <span className="ml-2 text-xs text-slate-500">
+                                asignado por {a.assigned_by_email}
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            disabled={assignSubmitting}
+                            onClick={() => void removeGroupAssignment(a.id)}
+                            className="rounded border border-rose-200 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                          >
+                            Quitar
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-3 text-sm text-slate-500">Nadie asignado aún.</p>
+                  )}
+                  <form onSubmit={addGroupAssignment} className="mt-4 flex flex-wrap items-end gap-2">
+                    <div className="min-w-[12rem] flex-1">
+                      <label htmlFor="labeler-select" className="block text-xs font-medium text-slate-600">
+                        Añadir etiquetador
+                      </label>
+                      <select
+                        id="labeler-select"
+                        className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                        value={selectedLabelerId}
+                        onChange={(e) => setSelectedLabelerId(e.target.value)}
+                        disabled={assignSubmitting || labelersForSelect.length === 0}
+                      >
+                        <option value="">
+                          {labelersForSelect.length === 0
+                            ? 'No hay más etiquetadores disponibles'
+                            : 'Elige un usuario…'}
+                        </option>
+                        {labelersForSelect.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.email}
+                            {u.first_name || u.last_name
+                              ? ` (${[u.first_name, u.last_name].filter(Boolean).join(' ')})`
+                              : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <button
+                      type="submit"
+                      disabled={assignSubmitting || !selectedLabelerId}
+                      className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+                    >
+                      {assignSubmitting ? '…' : 'Asignar'}
+                    </button>
+                  </form>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showGalleryUploadModal && canEdit && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4"
+          role="presentation"
+          onClick={() => setShowGalleryUploadModal(false)}
+        >
+          <div
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="gallery-upload-modal-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-6 py-4">
+              <h2 id="gallery-upload-modal-title" className="text-lg font-semibold text-slate-800">
+                Subir a la galería
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowGalleryUploadModal(false)}
+                className="rounded-lg p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                aria-label="Cerrar"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-6 py-4">
+              <div
+                className={`flex min-h-[12rem] flex-col justify-center rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
+                  dragOver ? 'border-sky-500 bg-sky-50' : 'border-slate-300 bg-slate-50'
+                }`}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDragOver(true)
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setDragOver(false)
+                  addFilesFromList(e.dataTransfer.files)
+                }}
+              >
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"
+                  className="hidden"
+                  id="file-up"
+                  onChange={(e) => {
+                    addFilesFromList(e.target.files)
+                    e.target.value = ''
+                  }}
+                />
+                <p className="text-sm text-slate-600">
+                  Arrastra aquí imágenes o un video, o{' '}
+                  <label htmlFor="file-up" className="cursor-pointer font-medium text-sky-600 hover:underline">
+                    elige archivos
+                  </label>
+                </p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Imágenes: JPEG/PNG · máx. 10 MB · hasta 100 por envío
+                </p>
+                <p className="text-xs text-slate-500">
+                  Video: MP4, MOV, AVI, WebM · máx. 500 MB · se extraerán frames automáticamente
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!canEdit && <p className="mt-1 text-sm text-slate-500">Galería de imágenes</p>}
       {canEdit && (
         <div className="mt-4 space-y-3">
-          <div
-            className={`rounded-xl border-2 border-dashed p-6 text-center transition-colors ${
-              dragOver ? 'border-sky-500 bg-sky-50' : 'border-slate-300 bg-slate-50'
-            }`}
-            onDragOver={(e) => {
-              e.preventDefault()
-              setDragOver(true)
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault()
-              setDragOver(false)
-              addFilesFromList(e.dataTransfer.files)
-            }}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/jpeg,image/png,video/mp4,video/quicktime,video/x-msvideo,video/webm,.mp4,.mov,.avi,.webm"
-              className="hidden"
-              id="file-up"
-              onChange={(e) => {
-                addFilesFromList(e.target.files)
-                e.target.value = ''
-              }}
-            />
-            <p className="text-sm text-slate-600">
-              Arrastra aquí imágenes o un video, o{' '}
-              <label htmlFor="file-up" className="cursor-pointer font-medium text-sky-600 hover:underline">
-                elige archivos
-              </label>
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Imágenes: JPEG/PNG · máx. 10 MB · hasta 100 por envío
-            </p>
-            <p className="text-xs text-slate-500">
-              Video: MP4, MOV, AVI, WebM · máx. 500 MB · se extraerán frames automáticamente
-            </p>
-          </div>
-
           {pendingFiles.length > 0 && (
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -583,7 +892,7 @@ export default function GroupDetailPage() {
         </div>
       )}
 
-      <div className="mt-6 flex gap-2 border-b border-slate-200">
+      <div className="mt-6 flex flex-wrap gap-1 border-b border-slate-200">
         {tabs.map((t) => (
           <button
             key={t}
@@ -596,8 +905,7 @@ export default function GroupDetailPage() {
               tab === t ? 'border-sky-500 text-sky-700' : 'border-transparent text-slate-500'
             }`}
           >
-            {t === 'all' ? 'Todas' : t === 'completed' ? 'Etiquetadas' : 'Pendientes'} (
-            {groupCounts[t === 'pending' ? 'pending' : t === 'completed' ? 'completed' : 'all']})
+            {tabLabel(t)} ({tabCount(t, groupCounts)})
           </button>
         ))}
       </div>
@@ -706,12 +1014,24 @@ export default function GroupDetailPage() {
                 } ${
                   im.status === 'completed'
                     ? 'bg-emerald-100 text-emerald-800'
-                    : im.status === 'in_progress'
-                      ? 'bg-sky-100 text-sky-800'
-                      : 'bg-amber-100 text-amber-800'
+                    : im.status === 'pending_validation'
+                      ? 'bg-violet-100 text-violet-800'
+                      : im.status === 'rejected'
+                        ? 'bg-rose-100 text-rose-800'
+                        : im.status === 'in_progress'
+                          ? 'bg-sky-100 text-sky-800'
+                          : 'bg-amber-100 text-amber-800'
                 }`}
               >
-                {im.status}
+                {im.status === 'completed'
+                  ? 'Validada'
+                  : im.status === 'pending_validation'
+                    ? 'Por validar'
+                    : im.status === 'rejected'
+                      ? 'Rechazada'
+                      : im.status === 'in_progress'
+                        ? 'En progreso'
+                        : 'Pendiente'}
               </span>
             </div>
           </Link>

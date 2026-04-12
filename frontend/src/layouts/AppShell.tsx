@@ -1,14 +1,15 @@
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
-const nav = [
-  { to: '/projects', label: 'Proyectos' },
-]
-
 export default function AppShell() {
   const { user, logout } = useAuth()
   const loc = useLocation()
   const hideSidebar = loc.pathname.includes('/annotate/')
+
+  const nav = [
+    { to: '/projects', label: 'Proyectos' },
+    ...(user?.is_administrador ? [{ to: '/users', label: 'Usuarios' }] : []),
+  ]
 
   return (
     <div className="flex min-h-screen">
@@ -26,7 +27,7 @@ export default function AppShell() {
                 key={item.to}
                 to={item.to}
                 className={`block rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                  loc.pathname.startsWith(item.to)
+                  loc.pathname === item.to || loc.pathname.startsWith(`${item.to}/`)
                     ? 'border-l-4 border-sky-500 bg-sky-200/20 text-sky-800'
                     : 'text-slate-700 hover:bg-sky-200/20'
                 }`}

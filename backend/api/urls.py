@@ -6,6 +6,7 @@ from . import views
 
 router = DefaultRouter()
 router.register(r"projects", views.ProjectViewSet, basename="project")
+router.register(r"users", views.UserAdminViewSet, basename="company-user")
 
 urlpatterns = [
     path("health/", views.health),
@@ -31,6 +32,14 @@ urlpatterns = [
         views.LabelClassViewSet.as_view(
             {"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"},
         ),
+    ),
+    path(
+        "projects/<int:project_pk>/groups/<int:group_pk>/assignments/",
+        views.GroupAssignmentViewSet.as_view({"get": "list", "post": "create"}),
+    ),
+    path(
+        "projects/<int:project_pk>/groups/<int:group_pk>/assignments/<int:pk>/",
+        views.GroupAssignmentViewSet.as_view({"delete": "destroy"}),
     ),
     path(
         "projects/<int:project_pk>/groups/<int:group_pk>/upload-video/",

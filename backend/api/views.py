@@ -13,6 +13,7 @@ from django.http import FileResponse, Http404
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -21,16 +22,31 @@ from core.models import (
     Annotation,
     DatasetVersion,
     DatasetVersionImage,
+    GroupAssignment,
     ImageGroup,
     LabelClass,
     Project,
     ProjectImage,
+    User,
+    ValidationRecord,
 )
 
 from .export_service import build_yolo_zip_bytes, collect_images
 from .pagination import FlexiblePageSizePagination
-from .mixins import filter_projects_for_user
-from .permissions import IsAdminOrEditor, IsCompanyMember
+from .mixins import (
+    filter_image_groups_for_user,
+    filter_projects_for_user,
+    user_can_access_project_image,
+    user_can_annotate_image,
+    user_can_validate_image,
+    user_has_global_project_access,
+)
+from .permissions import (
+    CanExportDataset,
+    IsAdministrador,
+    IsAsignadorOrAdministrador,
+    IsCompanyMember,
+)
 from .serializers import (
     AnnotationSerializer,
     AnnotationWriteItemSerializer,
@@ -38,13 +54,17 @@ from .serializers import (
     DatasetVersionSerializer,
     DetectedObjectSerializer,
     FindSimilarRequestSerializer,
+    GroupAssignmentSerializer,
     ImageGroupSerializer,
     LabelClassSerializer,
     ProjectImageSerializer,
     ProjectImageUpdateSerializer,
     ProjectListSerializer,
     ProjectSerializer,
+    UserCreateSerializer,
+    UserListSerializer,
     UserMeSerializer,
+    UserUpdateSerializer,
 )
 
 
@@ -59,6 +79,33 @@ class MeView(viewsets.ViewSet):
 
     def list(self, request):
         return Response(UserMeSerializer(request.user).data)
+
+
+class UserAdminViewSet(viewsets.ModelViewSet):
+    """Alta y edición de usuarios: lectura para asignador/admin (p. ej. asignar grupos); escritura solo administrador."""
+
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def get_permissions(self):
+        if self.action in ("list", "retrieve"):
+            return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
+        return [IsAuthenticated(), IsCompanyMember(), IsAdministrador()]
+
+    def get_queryset(self):
+        return User.objects.filter(company_id=self.request.user.company_id).order_by("email")
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return UserCreateSerializer
+        if self.action in ("partial_update", "update"):
+            return UserUpdateSerializer
+        return UserListSerializer
+
+    def perform_destroy(self, instance):
+        if instance.pk == self.request.user.pk:
+            raise PermissionDenied("No podés desactivar tu propio usuario.")
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -85,9 +132,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return ProjectSerializer
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "stats", "export_yolov8"):
+        if self.action in ("list", "retrieve", "stats"):
             return [IsAuthenticated(), IsCompanyMember()]
-        return [IsAuthenticated(), IsCompanyMember(), IsAdminOrEditor()]
+        if self.action == "export_yolov8":
+            return [IsAuthenticated(), IsCompanyMember(), CanExportDataset()]
+        return [IsAuthenticated(), IsCompanyMember(), IsAdministrador()]
 
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
@@ -106,6 +155,23 @@ class ProjectViewSet(viewsets.ModelViewSet):
         completed = imgs.filter(status=ProjectImage.Status.COMPLETED).count()
         pending = imgs.filter(status=ProjectImage.Status.PENDING).count()
         in_progress = imgs.filter(status=ProjectImage.Status.IN_PROGRESS).count()
+        pending_validation = imgs.filter(status=ProjectImage.Status.PENDING_VALIDATION).count()
+        rejected = imgs.filter(status=ProjectImage.Status.REJECTED).count()
+        label_classes = list(
+            LabelClass.objects.filter(project=project).order_by("sort_index", "id").values("id", "name", "color_hex"),
+        )
+        counts_map: dict[tuple[int, int], int] = {}
+        for row in (
+            Annotation.objects.filter(
+                image__group__project=project,
+                image__deleted_at__isnull=True,
+                image__group__deleted_at__isnull=True,
+            )
+            .values("image__group_id", "label_class_id")
+            .annotate(image_count=Count("image_id", distinct=True))
+        ):
+            counts_map[(row["image__group_id"], row["label_class_id"])] = row["image_count"]
+
         by_group = []
         for g in ImageGroup.objects.filter(project=project, deleted_at__isnull=True).annotate(
             ic=Count("images", filter=Q(images__deleted_at__isnull=True)),
@@ -114,12 +180,22 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 filter=Q(images__deleted_at__isnull=True, images__status=ProjectImage.Status.COMPLETED),
             ),
         ):
+            images_by_class = [
+                {
+                    "id": lc["id"],
+                    "name": lc["name"],
+                    "color_hex": lc["color_hex"] or "#3B82F6",
+                    "image_count": counts_map.get((g.id, lc["id"]), 0),
+                }
+                for lc in label_classes
+            ]
             by_group.append(
                 {
                     "id": g.id,
                     "name": g.name,
                     "total_images": g.ic,
                     "completed_images": g.cc,
+                    "images_by_class": images_by_class,
                 },
             )
         return Response(
@@ -128,6 +204,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 "completed_images": completed,
                 "pending_images": pending,
                 "in_progress_images": in_progress,
+                "pending_validation_images": pending_validation,
+                "rejected_images": rejected,
                 "groups": by_group,
             },
         )
@@ -169,21 +247,47 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return resp
 
 
+class GroupAssignmentViewSet(viewsets.ModelViewSet):
+    """Asignación de un grupo a etiquetadores (solo asignador o administrador escriben)."""
+
+    serializer_class = GroupAssignmentSerializer
+    http_method_names = ["get", "post", "delete", "head", "options"]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
+
+    def get_queryset(self):
+        gid = self.kwargs["group_pk"]
+        return GroupAssignment.objects.filter(
+            image_group_id=gid,
+            image_group__project_id=self.kwargs["project_pk"],
+            image_group__project__company_id=self.request.user.company_id,
+            image_group__deleted_at__isnull=True,
+        ).select_related("labeler", "assigned_by")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["project_id"] = self.kwargs["project_pk"]
+        ctx["image_group_id"] = self.kwargs["group_pk"]
+        return ctx
+
+
 class ImageGroupViewSet(viewsets.ModelViewSet):
     serializer_class = ImageGroupSerializer
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated(), IsCompanyMember()]
-        return [IsAuthenticated(), IsCompanyMember(), IsAdminOrEditor()]
+        return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
 
     def get_queryset(self):
         pid = self.kwargs["project_pk"]
-        return ImageGroup.objects.filter(
+        qs = ImageGroup.objects.filter(
             project_id=pid,
             project__company_id=self.request.user.company_id,
             deleted_at__isnull=True,
         )
+        return filter_image_groups_for_user(qs, self.request.user)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
@@ -204,7 +308,7 @@ class LabelClassViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated(), IsCompanyMember()]
-        return [IsAuthenticated(), IsCompanyMember(), IsAdminOrEditor()]
+        return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
 
     def get_queryset(self):
         pid = self.kwargs["project_pk"]
@@ -237,7 +341,13 @@ class ProjectImageViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
             return [IsAuthenticated(), IsCompanyMember()]
-        return [IsAuthenticated(), IsCompanyMember(), IsAdminOrEditor()]
+        if self.action == "create":
+            return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
+        if self.action == "destroy":
+            return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
+        if self.action in ("partial_update", "update"):
+            return [IsAuthenticated(), IsCompanyMember()]
+        return [IsAuthenticated(), IsCompanyMember()]
 
     def get_queryset(self):
         gid = self.kwargs["group_pk"]
@@ -252,15 +362,21 @@ class ProjectImageViewSet(viewsets.ModelViewSet):
             .annotate(annotation_count=Count("annotations"))
             .prefetch_related(Prefetch("annotations", queryset=ann_qs))
         )
+        user = self.request.user
+        if not user_has_global_project_access(user) and getattr(user, "is_etiquetador", False):
+            qs = qs.filter(group__assignments__labeler=user).distinct()
         status_filter = (self.request.query_params.get("status") or "").strip().lower()
-        if status_filter == "completed":
-            qs = qs.filter(status=ProjectImage.Status.COMPLETED)
+        S = ProjectImage.Status
+        if status_filter in ("pendientes", "to_label", "labeling"):
+            qs = qs.filter(status__in=[S.PENDING, S.IN_PROGRESS, S.REJECTED])
+        elif status_filter in ("pending_validation", "etiquetadas", "validar", "to_validate"):
+            qs = qs.filter(status=S.PENDING_VALIDATION)
+        elif status_filter in ("validadas", "completed", "validated"):
+            qs = qs.filter(status=S.COMPLETED)
         elif status_filter == "pending":
+            # Compatibilidad: todo lo que no está validado como completado
             qs = qs.filter(
-                status__in=[
-                    ProjectImage.Status.PENDING,
-                    ProjectImage.Status.IN_PROGRESS,
-                ]
+                status__in=[S.PENDING, S.IN_PROGRESS, S.REJECTED, S.PENDING_VALIDATION],
             )
         return qs.order_by("id")
 
@@ -273,10 +389,17 @@ class ProjectImageViewSet(viewsets.ModelViewSet):
             group__project__company_id=request.user.company_id,
             deleted_at__isnull=True,
         )
+        S = ProjectImage.Status
+        pendientes = base.filter(status__in=[S.PENDING, S.IN_PROGRESS, S.REJECTED]).count()
+        pending_validation = base.filter(status=S.PENDING_VALIDATION).count()
+        validadas = base.filter(status=S.COMPLETED).count()
         counts = {
             "all": base.count(),
-            "completed": base.filter(status=ProjectImage.Status.COMPLETED).count(),
-            "pending": base.exclude(status=ProjectImage.Status.COMPLETED).count(),
+            "pendientes": pendientes,
+            "pending_validation": pending_validation,
+            "validadas": validadas,
+            "completed": validadas,
+            "pending": pendientes + pending_validation,
         }
         if hasattr(response, "data") and isinstance(response.data, dict):
             response.data["group_image_counts"] = counts
@@ -351,7 +474,26 @@ class ProjectImageViewSet(viewsets.ModelViewSet):
         return Response({"created": ser.data, "errors": errors}, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
-        serializer.save(updated_by=self.request.user)
+        comment = serializer.validated_data.pop("validation_comment", "")
+        prev_status = serializer.instance.status
+        image = serializer.save(updated_by=self.request.user)
+        new_status = image.status
+        user = self.request.user
+        if (
+            prev_status == ProjectImage.Status.PENDING_VALIDATION
+            and new_status in (ProjectImage.Status.COMPLETED, ProjectImage.Status.REJECTED)
+            and user_can_validate_image(user)
+        ):
+            ValidationRecord.objects.create(
+                image=image,
+                validator=user,
+                decision=(
+                    ValidationRecord.Decision.APPROVED
+                    if new_status == ProjectImage.Status.COMPLETED
+                    else ValidationRecord.Decision.REJECTED
+                ),
+                comment=comment or "",
+            )
 
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
@@ -371,6 +513,8 @@ def project_image_file(request, pk):
         )
     except ProjectImage.DoesNotExist:
         raise Http404
+    if not user_can_access_project_image(request.user, img):
+        raise Http404
     path = Path(settings.MEDIA_ROOT) / img.storage_path
     if not path.is_file():
         raise Http404
@@ -389,6 +533,8 @@ def image_neighbors(request, pk):
         )
     except ProjectImage.DoesNotExist:
         raise Http404
+    if not user_can_access_project_image(request.user, img):
+        raise Http404
     qs = ProjectImage.objects.filter(group=img.group, deleted_at__isnull=True).order_by("id")
     ids = list(qs.values_list("id", flat=True))
     try:
@@ -404,18 +550,20 @@ class AnnotationViewSet(viewsets.ModelViewSet):
     serializer_class = AnnotationSerializer
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), IsCompanyMember()]
-        return [IsAuthenticated(), IsCompanyMember(), IsAdminOrEditor()]
+        return [IsAuthenticated(), IsCompanyMember()]
 
     def get_queryset(self):
         iid = self.kwargs["image_pk"]
-        return Annotation.objects.filter(
+        qs = Annotation.objects.filter(
             image_id=iid,
             image__group__project__company_id=self.request.user.company_id,
             image__group__deleted_at__isnull=True,
             image__deleted_at__isnull=True,
         )
+        user = self.request.user
+        if not user_has_global_project_access(user) and getattr(user, "is_etiquetador", False):
+            qs = qs.filter(image__group__assignments__labeler=user)
+        return qs
 
     def perform_create(self, serializer):
         image = ProjectImage.objects.get(
@@ -424,23 +572,34 @@ class AnnotationViewSet(viewsets.ModelViewSet):
             group__deleted_at__isnull=True,
             group__project__company_id=self.request.user.company_id,
         )
+        if not user_can_annotate_image(self.request.user, image):
+            raise PermissionDenied("No podés anotar esta imagen en su estado actual.")
         ann = serializer.save(image=image)
         self._sync_image_status(image)
 
     def perform_update(self, serializer):
+        if not user_can_annotate_image(self.request.user, serializer.instance.image):
+            raise PermissionDenied("No podés editar anotaciones en esta imagen.")
         ann = serializer.save()
         self._sync_image_status(ann.image)
 
     def perform_destroy(self, instance):
         image = instance.image
+        if not user_can_annotate_image(self.request.user, image):
+            raise PermissionDenied("No podés eliminar anotaciones en esta imagen.")
         super().perform_destroy(instance)
         self._sync_image_status(image)
 
     def _sync_image_status(self, image: ProjectImage):
-        has_ann = image.annotations.exists()
         if image.status == ProjectImage.Status.COMPLETED:
             return
-        new_status = ProjectImage.Status.IN_PROGRESS if has_ann else ProjectImage.Status.PENDING
+        if image.status == ProjectImage.Status.PENDING_VALIDATION:
+            return
+        has_ann = image.annotations.exists()
+        if image.status == ProjectImage.Status.REJECTED:
+            new_status = ProjectImage.Status.IN_PROGRESS if has_ann else ProjectImage.Status.PENDING
+        else:
+            new_status = ProjectImage.Status.IN_PROGRESS if has_ann else ProjectImage.Status.PENDING
         if image.status != new_status:
             image.status = new_status
             image.save(update_fields=["status", "updated_at"])
@@ -455,6 +614,8 @@ class AnnotationViewSet(viewsets.ModelViewSet):
             group__deleted_at__isnull=True,
             group__project__company_id=request.user.company_id,
         )
+        if not user_can_annotate_image(request.user, image):
+            raise PermissionDenied("No podés reemplazar anotaciones en esta imagen.")
         ser = AnnotationWriteItemSerializer(data=request.data, many=True)
         ser.is_valid(raise_exception=True)
         idx_map = {lc.id: lc for lc in LabelClass.objects.filter(project_id=project_pk)}
@@ -505,6 +666,9 @@ def find_similar_objects(request, project_pk, group_pk, image_pk):
     except ProjectImage.DoesNotExist:
         return Response({"detail": "Imagen destino no encontrada."}, status=status.HTTP_404_NOT_FOUND)
 
+    if not user_can_access_project_image(request.user, target_image):
+        return Response({"detail": "Imagen destino no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
     try:
         source_image = ProjectImage.objects.select_related("group__project").get(
             pk=source_image_id,
@@ -513,6 +677,9 @@ def find_similar_objects(request, project_pk, group_pk, image_pk):
             group__project__company_id=company_id,
         )
     except ProjectImage.DoesNotExist:
+        return Response({"detail": "Imagen origen no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    if not user_can_access_project_image(request.user, source_image):
         return Response({"detail": "Imagen origen no encontrada."}, status=status.HTTP_404_NOT_FOUND)
 
     source_annotations = Annotation.objects.filter(image=source_image).select_related("label_class")
@@ -578,7 +745,7 @@ def find_similar_objects(request, project_pk, group_pk, image_pk):
 
 
 @api_view(["POST"])
-@permission_classes([IsAuthenticated, IsCompanyMember, IsAdminOrEditor])
+@permission_classes([IsAuthenticated, IsCompanyMember, IsAsignadorOrAdministrador])
 def upload_video(request, project_pk, group_pk):
     """Extract frames from a video and create ProjectImage records."""
     group = ImageGroup.objects.select_related("project").get(
@@ -697,9 +864,11 @@ class DatasetVersionViewSet(viewsets.ModelViewSet):
         ).annotate(images_count=Count("version_images"))
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "export_yolov8"):
+        if self.action == "export_yolov8":
+            return [IsAuthenticated(), IsCompanyMember(), CanExportDataset()]
+        if self.action in ("list", "retrieve"):
             return [IsAuthenticated(), IsCompanyMember()]
-        return [IsAuthenticated(), IsCompanyMember(), IsAdminOrEditor()]
+        return [IsAuthenticated(), IsCompanyMember(), IsAsignadorOrAdministrador()]
 
     def create(self, request, *args, **kwargs):
         project = Project.objects.get(

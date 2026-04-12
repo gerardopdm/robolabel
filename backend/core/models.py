@@ -30,23 +30,32 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("is_active", True)
+        extra_fields.setdefault("is_administrador", True)
         if extra_fields.get("company_id") is None:
             company, _ = Company.objects.get_or_create(name="Sistema")
             extra_fields["company"] = company
-        if not extra_fields.get("role"):
-            extra_fields["role"] = User.Role.ADMIN
         return self.create_user(email, password, **extra_fields)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    class Role(models.TextChoices):
-        ADMIN = "admin", "Administrador"
-        EDITOR = "editor", "Editor"
-        VIEWER = "viewer", "Visualizador"
-
     email = models.EmailField(unique=True, max_length=254)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="users")
-    role = models.CharField(max_length=32, choices=Role.choices, default=Role.EDITOR)
+    is_administrador = models.BooleanField(
+        default=False,
+        help_text="Gestión amplia y acceso al sitio de administración Django (is_staff sincronizado).",
+    )
+    is_asignador = models.BooleanField(
+        default=False,
+        help_text="Subida de imágenes, asignación a etiquetadores y creación de versiones de dataset.",
+    )
+    is_etiquetador = models.BooleanField(
+        default=False,
+        help_text="Etiquetado en imágenes de grupos asignados.",
+    )
+    is_validador = models.BooleanField(
+        default=False,
+        help_text="Aprobación o rechazo de imágenes en revisión; transición a completada.",
+    )
     first_name = models.CharField(max_length=150, blank=True)
     last_name = models.CharField(max_length=150, blank=True)
     is_active = models.BooleanField(default=True)
@@ -65,6 +74,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+    def save(self, *args, **kwargs):
+        if not self.is_superuser:
+            self.is_staff = bool(self.is_administrador)
+        super().save(*args, **kwargs)
 
 
 class Project(models.Model):
@@ -116,6 +130,37 @@ class ImageGroup(models.Model):
         return f"{self.project.name} / {self.name}"
 
 
+class GroupAssignment(models.Model):
+    """Asigna un grupo de imágenes a un etiquetador (docs/arquitectura-permisos.md)."""
+
+    image_group = models.ForeignKey(ImageGroup, on_delete=models.CASCADE, related_name="assignments")
+    labeler = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="group_assignments",
+    )
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="group_assignments_made",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["image_group", "labeler"],
+                name="uniq_group_assignment_labeler",
+            ),
+        ]
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.image_group_id} → {self.labeler_id}"
+
+
 class LabelClass(models.Model):
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="label_classes")
     name = models.CharField(max_length=255)
@@ -138,7 +183,9 @@ class ProjectImage(models.Model):
     class Status(models.TextChoices):
         PENDING = "pending", "Pendiente"
         IN_PROGRESS = "in_progress", "En progreso"
+        PENDING_VALIDATION = "pending_validation", "En validación"
         COMPLETED = "completed", "Completada"
+        REJECTED = "rejected", "Rechazada"
 
     group = models.ForeignKey(ImageGroup, on_delete=models.CASCADE, related_name="images")
     storage_path = models.CharField(max_length=512)
@@ -182,6 +229,28 @@ class ProjectImage(models.Model):
     @property
     def project(self):
         return self.group.project
+
+
+class ValidationRecord(models.Model):
+    """Historial de decisiones de validación sobre una imagen."""
+
+    class Decision(models.TextChoices):
+        APPROVED = "approved", "Aprobada"
+        REJECTED = "rejected", "Rechazada"
+
+    image = models.ForeignKey(ProjectImage, on_delete=models.CASCADE, related_name="validation_records")
+    validator = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="validation_records",
+    )
+    decision = models.CharField(max_length=16, choices=Decision.choices)
+    comment = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class Annotation(models.Model):

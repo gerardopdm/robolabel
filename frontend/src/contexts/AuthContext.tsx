@@ -14,7 +14,10 @@ export type User = {
   email: string
   first_name: string
   last_name: string
-  role: string
+  is_administrador: boolean
+  is_asignador: boolean
+  is_etiquetador: boolean
+  is_validador: boolean
   company: { id: number; name: string }
 }
 

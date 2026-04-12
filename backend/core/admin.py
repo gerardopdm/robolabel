@@ -6,11 +6,13 @@ from .models import (
     Company,
     DatasetVersion,
     DatasetVersionImage,
+    GroupAssignment,
     ImageGroup,
     LabelClass,
     Project,
     ProjectImage,
     User,
+    ValidationRecord,
 )
 
 
@@ -23,13 +25,33 @@ class CompanyAdmin(admin.ModelAdmin):
 class UserAdmin(DjangoUserAdmin):
     model = User
     ordering = ("email",)
-    list_display = ("email", "company", "role", "is_staff", "is_active")
-    list_filter = ("role", "is_staff", "is_active")
+    list_display = (
+        "email",
+        "company",
+        "is_administrador",
+        "is_asignador",
+        "is_etiquetador",
+        "is_validador",
+        "is_staff",
+        "is_active",
+    )
+    list_filter = ("is_administrador", "is_asignador", "is_etiquetador", "is_validador", "is_staff", "is_active")
     search_fields = ("email", "first_name", "last_name")
 
     fieldsets = (
         (None, {"fields": ("email", "password")}),
-        ("Organización", {"fields": ("company", "role")}),
+        (
+            "Organización",
+            {
+                "fields": (
+                    "company",
+                    "is_administrador",
+                    "is_asignador",
+                    "is_etiquetador",
+                    "is_validador",
+                ),
+            },
+        ),
         ("Información personal", {"fields": ("first_name", "last_name")}),
         (
             "Permisos",
@@ -50,7 +72,16 @@ class UserAdmin(DjangoUserAdmin):
             None,
             {
                 "classes": ("wide",),
-                "fields": ("email", "company", "role", "password1", "password2"),
+                "fields": (
+                    "email",
+                    "company",
+                    "is_administrador",
+                    "is_asignador",
+                    "is_etiquetador",
+                    "is_validador",
+                    "password1",
+                    "password2",
+                ),
             },
         ),
     )
@@ -70,6 +101,11 @@ class ImageGroupAdmin(admin.ModelAdmin):
     list_filter = ("deleted_at",)
 
 
+@admin.register(GroupAssignment)
+class GroupAssignmentAdmin(admin.ModelAdmin):
+    list_display = ("id", "image_group", "labeler", "assigned_by", "created_at")
+
+
 @admin.register(LabelClass)
 class LabelClassAdmin(admin.ModelAdmin):
     list_display = ("id", "name", "project", "sort_index")
@@ -78,6 +114,11 @@ class LabelClassAdmin(admin.ModelAdmin):
 @admin.register(ProjectImage)
 class ProjectImageAdmin(admin.ModelAdmin):
     list_display = ("id", "original_filename", "group", "status", "discarded_for_dataset")
+
+
+@admin.register(ValidationRecord)
+class ValidationRecordAdmin(admin.ModelAdmin):
+    list_display = ("id", "image", "validator", "decision", "created_at")
 
 
 @admin.register(Annotation)

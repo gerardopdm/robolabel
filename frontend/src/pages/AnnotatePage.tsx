@@ -34,7 +34,9 @@ export default function AnnotatePage() {
   const { projectId, groupId, imageId } = useParams()
   const nav = useNavigate()
   const { user } = useAuth()
-  const canEdit = user?.role === 'admin' || user?.role === 'editor'
+  const canValidate = Boolean(user?.is_administrador || user?.is_validador)
+  /** Etiquetador envía a validación; administrador puede cerrar como completada desde el lienzo. */
+  const statusWhenLabelingDone = user?.is_administrador ? 'completed' : 'pending_validation'
 
   const imgRef = useRef<HTMLImageElement>(null)
   const activeClassIdRef = useRef<number | null>(null)
@@ -69,7 +71,30 @@ export default function AnnotatePage() {
   const [findingSimilar, setFindingSimilar] = useState(false)
   const [similarError, setSimilarError] = useState<string | null>(null)
   const [showSimilarModal, setShowSimilarModal] = useState(false)
+  const [showHotkeysHelp, setShowHotkeysHelp] = useState(false)
   const similarParamsRef = useRef<SimilarityParams>({ ...DEFAULT_PARAMS })
+
+  /** Herramientas de etiquetado (rectángulos, guardar, clases) según rol y estado de la imagen. */
+  const canModifyAnnotations = useMemo(() => {
+    if (!imgMeta) return false
+    const s = imgMeta.status
+    if (user?.is_administrador) return true
+    if (user?.is_validador && s === 'pending_validation') return true
+    if (user?.is_etiquetador && (s === 'pending' || s === 'in_progress' || s === 'rejected')) return true
+    return false
+  }, [imgMeta, user])
+  /** Crear nuevas clases en el proyecto (solo admin/asignador/etiquetador). */
+  const canCreateLabelClass = Boolean(
+    user?.is_administrador || user?.is_asignador || user?.is_etiquetador,
+  )
+  /** Atajos de completar, similares y sugerencias (flujo etiquetador). */
+  const canUseLabelerShortcuts = Boolean(user?.is_administrador || user?.is_etiquetador)
+  const canSendToValidationOrComplete = Boolean(
+    imgMeta &&
+      (user?.is_administrador ||
+        (user?.is_etiquetador &&
+          ['pending', 'in_progress', 'rejected'].includes(imgMeta.status))),
+  )
 
   const nw = natural.w || imgMeta?.width_px || 1
   const nh = natural.h || imgMeta?.height_px || 1
@@ -130,7 +155,7 @@ export default function AnnotatePage() {
 
   /** Inicio de trazo en el lienzo (solo botón principal) */
   function handleCanvasPointerDown(e: React.PointerEvent) {
-    if (!canEdit || e.button !== 0 || moveInfo || resizeInfo) return
+    if (!canModifyAnnotations || e.button !== 0 || moveInfo || resizeInfo) return
     if (!activeClassIdRef.current) {
       setWarnNoClass(true)
       setTimeout(() => setWarnNoClass(false), 3000)
@@ -284,10 +309,12 @@ export default function AnnotatePage() {
     setCompleteError(null)
     try {
       await saveQuiet()
-      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, { status: 'completed' })
+      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, {
+        status: statusWhenLabelingDone,
+      })
       loadAll()
     } catch (err) {
-      setCompleteError(apiErrorMessage(err, 'No se pudo marcar como completada.'))
+      setCompleteError(apiErrorMessage(err, 'No se pudo actualizar el estado de la imagen.'))
     }
   }
 
@@ -296,10 +323,59 @@ export default function AnnotatePage() {
     setCompleteError(null)
     try {
       await saveQuiet()
-      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, { status: 'in_progress' })
+      const reopen =
+        imgMeta?.status === 'completed' &&
+        user?.is_validador &&
+        !user?.is_administrador
+          ? 'pending_validation'
+          : 'in_progress'
+      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, { status: reopen })
       loadAll()
     } catch (err) {
       setCompleteError(apiErrorMessage(err, 'No se pudo volver a marcar como en progreso.'))
+    }
+  }
+
+  async function approveValidation() {
+    if (!projectId || !groupId || !imageId) return
+    setCompleteError(null)
+    try {
+      await saveQuiet()
+      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, { status: 'completed' })
+      loadAll()
+    } catch (err) {
+      setCompleteError(apiErrorMessage(err, 'No se pudo aprobar la imagen.'))
+    }
+  }
+
+  async function rejectValidation() {
+    if (!projectId || !groupId || !imageId) return
+    const comment = window.prompt('Comentario del rechazo (opcional):') ?? ''
+    setCompleteError(null)
+    try {
+      await saveQuiet()
+      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, {
+        status: 'rejected',
+        validation_comment: comment,
+      })
+      loadAll()
+    } catch (err) {
+      setCompleteError(apiErrorMessage(err, 'No se pudo rechazar la imagen.'))
+    }
+  }
+
+  /** Devuelve la imagen a edición del etiquetador (en progreso), sin marcarla como rechazada formalmente. */
+  async function returnToLabelerForCorrection() {
+    if (!projectId || !groupId || !imageId) return
+    setCompleteError(null)
+    try {
+      await saveQuiet()
+      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, {
+        status: 'in_progress',
+      })
+      loadAll()
+    } catch (err) {
+      setCompleteError(apiErrorMessage(err, 'No se pudo devolver la imagen al etiquetador.'))
     }
   }
 
@@ -330,16 +406,28 @@ export default function AnnotatePage() {
         await api.put(`/projects/${pid}/groups/${gid}/images/${iid}/annotations/replace/`, buildPayload())
         setDirty(false)
       }
-      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, { status: 'completed' })
+      await api.patch(`/projects/${projectId}/groups/${groupId}/images/${imageId}/`, {
+        status: statusWhenLabelingDone,
+      })
       if (neighbors.next) {
         nav(`/projects/${projectId}/groups/${groupId}/annotate/${neighbors.next}`)
       } else {
         loadAll()
       }
     } catch (err) {
-      setCompleteError(apiErrorMessage(err, 'No se pudo marcar como completada.'))
+      setCompleteError(apiErrorMessage(err, 'No se pudo actualizar el estado de la imagen.'))
     }
-  }, [projectId, groupId, imageId, neighbors.next, nav, loadAll, dirty, annotations])
+  }, [
+    projectId,
+    groupId,
+    imageId,
+    neighbors.next,
+    nav,
+    loadAll,
+    dirty,
+    annotations,
+    statusWhenLabelingDone,
+  ])
 
   async function addQuickClass() {
     if (!projectId || !newClassName.trim()) return
@@ -434,9 +522,27 @@ export default function AnnotatePage() {
   }
 
   useEffect(() => {
+    if (!showHotkeysHelp) return
+    function onEsc(ev: KeyboardEvent) {
+      if (ev.key === 'Escape') {
+        ev.preventDefault()
+        setShowHotkeysHelp(false)
+      }
+    }
+    window.addEventListener('keydown', onEsc)
+    return () => window.removeEventListener('keydown', onEsc)
+  }, [showHotkeysHelp])
+
+  useEffect(() => {
     function onKey(ev: KeyboardEvent) {
       const tag = document.activeElement?.tagName
       const inField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+      if (!inField && ev.key === '?' && !ev.ctrlKey && !ev.metaKey && !ev.altKey) {
+        ev.preventDefault()
+        setShowHotkeysHelp((v) => !v)
+        return
+      }
+      if (showHotkeysHelp) return
       if (!inField && (ev.key === 'p' || ev.key === 'P')) {
         ev.preventDefault()
         void goNeighbor(neighbors.previous)
@@ -448,7 +554,7 @@ export default function AnnotatePage() {
         return
       }
       if (
-        canEdit &&
+        canSendToValidationOrComplete &&
         !inField &&
         !ev.ctrlKey &&
         !ev.metaKey &&
@@ -460,7 +566,7 @@ export default function AnnotatePage() {
         return
       }
       if (
-        canEdit &&
+        canUseLabelerShortcuts &&
         !inField &&
         !ev.ctrlKey &&
         !ev.metaKey &&
@@ -474,7 +580,7 @@ export default function AnnotatePage() {
         return
       }
       if (
-        canEdit &&
+        canUseLabelerShortcuts &&
         !inField &&
         !ev.ctrlKey &&
         !ev.metaKey &&
@@ -486,7 +592,7 @@ export default function AnnotatePage() {
         acceptAllSuggestions()
         return
       }
-      if (!canEdit) return
+      if (!canModifyAnnotations) return
       if (ev.key === 'Delete' || ev.key === 'Backspace') {
         if (selected != null && document.activeElement?.tagName !== 'INPUT') {
           ev.preventDefault()
@@ -498,7 +604,17 @@ export default function AnnotatePage() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [canEdit, selected, neighbors, markCompleteAndNext, findingSimilar, suggestions])
+  }, [
+    canModifyAnnotations,
+    canSendToValidationOrComplete,
+    canUseLabelerShortcuts,
+    selected,
+    neighbors,
+    markCompleteAndNext,
+    findingSimilar,
+    suggestions,
+    showHotkeysHelp,
+  ])
 
   const preview =
     drag &&
@@ -550,9 +666,13 @@ export default function AnnotatePage() {
                 <span className="font-medium text-slate-600">
                   {imgMeta.status === 'completed'
                     ? 'Completada'
-                    : imgMeta.status === 'in_progress'
-                      ? 'En progreso'
-                      : 'Pendiente'}
+                    : imgMeta.status === 'pending_validation'
+                      ? 'En validación'
+                      : imgMeta.status === 'rejected'
+                        ? 'Rechazada'
+                        : imgMeta.status === 'in_progress'
+                          ? 'En progreso'
+                          : 'Pendiente'}
                 </span>
                 {imgMeta.discarded_for_dataset ? (
                   <span className="text-slate-500">
@@ -564,65 +684,113 @@ export default function AnnotatePage() {
             )}
           </p>
         </div>
-        {canEdit && (
+        {(canModifyAnnotations || canValidate || canUseLabelerShortcuts) && (
           <div className="flex min-w-0 flex-1 flex-wrap items-center justify-between gap-y-2 gap-x-2">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1">
-                <label htmlFor="classSelect" className="text-xs font-medium text-slate-500">
-                  Clase (nueva caja)
-                </label>
-                {activeClassId != null && (
-                  <span
-                    className="h-3.5 w-3.5 shrink-0 rounded border border-black/15 shadow-inner"
-                    style={{ backgroundColor: activeDrawColor }}
-                    title="Color de esta clase en el lienzo"
-                    aria-hidden
-                  />
-                )}
-                <select
-                  id="classSelect"
-                  value={activeClassId ?? ''}
-                  onChange={(e) => setActiveClassId(Number(e.target.value) || null)}
-                  className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[0.8125rem] focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
-                >
-                  {classes.length === 0 && <option value="">— Sin clases —</option>}
-                  {classes.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <span className="hidden h-5 w-px bg-slate-200 sm:inline" aria-hidden />
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[0.8125rem] font-medium text-slate-600 shadow-sm hover:bg-slate-50"
-                onClick={() => void save()}
-              >
-                <i className="fa-solid fa-floppy-disk" aria-hidden />
-                Guardar
-              </button>
-              {imgMeta?.status === 'completed' ? (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 rounded-lg border border-amber-500 bg-amber-50 px-2 py-1.5 text-[0.8125rem] font-medium text-amber-900 shadow-sm hover:bg-amber-100"
-                  title="Volver a dejar la imagen en progreso (por si quieres seguir editando)"
-                  onClick={() => void markInProgress()}
-                >
-                  <i className="fa-solid fa-rotate-left" aria-hidden />
-                  En progreso
-                </button>
+              {canModifyAnnotations && (
+                <>
+                  <div className="flex items-center gap-1">
+                    <label htmlFor="classSelect" className="text-xs font-medium text-slate-500">
+                      Clase (nueva caja)
+                    </label>
+                    {activeClassId != null && (
+                      <span
+                        className="h-3.5 w-3.5 shrink-0 rounded border border-black/15 shadow-inner"
+                        style={{ backgroundColor: activeDrawColor }}
+                        title="Color de esta clase en el lienzo"
+                        aria-hidden
+                      />
+                    )}
+                    <select
+                      id="classSelect"
+                      value={activeClassId ?? ''}
+                      onChange={(e) => setActiveClassId(Number(e.target.value) || null)}
+                      className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[0.8125rem] focus:border-sky-500 focus:outline-none focus:ring-2 focus:ring-sky-200"
+                    >
+                      {classes.length === 0 && <option value="">— Sin clases —</option>}
+                      {classes.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="hidden h-5 w-px bg-slate-200 sm:inline" aria-hidden />
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[0.8125rem] font-medium text-slate-600 shadow-sm hover:bg-slate-50"
+                    onClick={() => void save()}
+                  >
+                    <i className="fa-solid fa-floppy-disk" aria-hidden />
+                    Guardar
+                  </button>
+                </>
+              )}
+              {imgMeta?.status === 'pending_validation' && canValidate ? (
+                <>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-emerald-600 bg-emerald-600 px-2 py-1.5 text-[0.8125rem] font-medium text-white shadow-sm hover:bg-emerald-700"
+                    title="Marcar como validada y lista para exportar"
+                    onClick={() => void approveValidation()}
+                  >
+                    <i className="fa-solid fa-check" aria-hidden />
+                    Marcar como validada
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-amber-500 bg-amber-50 px-2 py-1.5 text-[0.8125rem] font-medium text-amber-900 shadow-sm hover:bg-amber-100"
+                    title="Vuelve la imagen a edición para que el etiquetador corrija (sin rechazo formal)"
+                    onClick={() => void returnToLabelerForCorrection()}
+                  >
+                    <i className="fa-solid fa-arrow-rotate-left" aria-hidden />
+                    Devolver a edición
+                  </button>
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-red-500 bg-red-50 px-2 py-1.5 text-[0.8125rem] font-medium text-red-800 shadow-sm hover:bg-red-100"
+                    title="Rechazo formal con comentario; el etiquetador verá la imagen como rechazada"
+                    onClick={() => void rejectValidation()}
+                  >
+                    <i className="fa-solid fa-xmark" aria-hidden />
+                    Rechazar
+                  </button>
+                </>
+              ) : imgMeta?.status === 'pending_validation' && user?.is_etiquetador && !canValidate ? (
+                <span className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[0.8125rem] text-amber-900">
+                  En revisión por validador
+                </span>
+              ) : imgMeta?.status === 'completed' ? (
+                (user?.is_administrador || user?.is_validador) && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 rounded-lg border border-amber-500 bg-amber-50 px-2 py-1.5 text-[0.8125rem] font-medium text-amber-900 shadow-sm hover:bg-amber-100"
+                    title={
+                      user?.is_validador && !user?.is_administrador
+                        ? 'Reabrir para revisión'
+                        : 'Volver a dejar la imagen en progreso'
+                    }
+                    onClick={() => void markInProgress()}
+                  >
+                    <i className="fa-solid fa-rotate-left" aria-hidden />
+                    {user?.is_validador && !user?.is_administrador ? 'Reabrir' : 'En progreso'}
+                  </button>
+                )
               ) : (
                 <button
                   type="button"
                   className="inline-flex items-center gap-1 rounded-lg border border-sky-600 bg-sky-600 px-2 py-1.5 text-[0.8125rem] font-medium text-white shadow-sm hover:bg-sky-700"
-                  title="Marcar como completada (tecla C: completar e ir a la siguiente)"
+                  title={
+                    user?.is_administrador
+                      ? 'Marcar como completada (tecla C: completar e ir a la siguiente)'
+                      : 'Enviar a validación (tecla C: enviar e ir a la siguiente)'
+                  }
                   onClick={() => void markComplete()}
                 >
-                  Completada
+                  {user?.is_administrador ? 'Completada' : 'Enviar a validación'}
                 </button>
               )}
-              {neighbors.previous != null && (
+              {canUseLabelerShortcuts && neighbors.previous != null && (
                 <span className="inline-flex">
                   <button
                     type="button"
@@ -654,19 +822,21 @@ export default function AnnotatePage() {
                   {completeError}
                 </span>
               )}
-              <label
-                className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[0.8125rem] text-slate-700 shadow-sm hover:bg-slate-50"
-                title="Las imágenes descartadas no se incluyen al exportar o generar el ZIP de entrenamiento (YOLO)."
-              >
-                <input
-                  type="checkbox"
-                  className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
-                  checked={imgMeta?.discarded_for_dataset ?? false}
-                  disabled={discardSaving || !imgMeta}
-                  onChange={(e) => void setDiscardedForDataset(e.target.checked)}
-                />
-                <span className="font-medium">Descartar para el dataset</span>
-              </label>
+              {(user?.is_administrador || user?.is_asignador) && (
+                <label
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[0.8125rem] text-slate-700 shadow-sm hover:bg-slate-50"
+                  title="Las imágenes descartadas no se incluyen al exportar o generar el ZIP de entrenamiento (YOLO)."
+                >
+                  <input
+                    type="checkbox"
+                    className="rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                    checked={imgMeta?.discarded_for_dataset ?? false}
+                    disabled={discardSaving || !imgMeta}
+                    onChange={(e) => void setDiscardedForDataset(e.target.checked)}
+                  />
+                  <span className="font-medium">Descartar para el dataset</span>
+                </label>
+              )}
               {discardError && (
                 <span className="max-w-[14rem] text-xs text-red-600" title={discardError}>
                   {discardError}
@@ -699,6 +869,15 @@ export default function AnnotatePage() {
               </button>
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-2">
+              <button
+                type="button"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[0.8125rem] text-slate-600 shadow-sm hover:bg-slate-50"
+                title="Atajos de teclado (tecla ?)"
+                onClick={() => setShowHotkeysHelp(true)}
+              >
+                <i className="fa-solid fa-keyboard" aria-hidden />
+                <span className="hidden sm:inline">Atajos</span>
+              </button>
               <button
                 type="button"
                 className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[0.8125rem] shadow-sm hover:bg-slate-50"
@@ -799,12 +978,12 @@ export default function AnnotatePage() {
                               strokeWidth={wStroke}
                               vectorEffect="nonScalingStroke"
                               pointerEvents="all"
-                              style={{ cursor: canEdit ? 'move' : 'pointer' }}
+                              style={{ cursor: canModifyAnnotations ? 'move' : 'pointer' }}
                               onPointerDown={(e) => {
                                 e.stopPropagation()
                                 e.preventDefault()
                                 setSelected(i)
-                                if (canEdit) {
+                                if (canModifyAnnotations) {
                                   const p = toImageCoords(e.clientX, e.clientY)
                                   if (p) {
                                     setMoveInfo({
@@ -875,7 +1054,7 @@ export default function AnnotatePage() {
                           />
                         </g>
                       )}
-                      {selected != null && annotations[selected] && canEdit && (() => {
+                      {selected != null && annotations[selected] && canModifyAnnotations && (() => {
                         const sa = annotations[selected]
                         const sx = Number(sa.x), sy = Number(sa.y)
                         const sw = Number(sa.width), sh = Number(sa.height)
@@ -911,12 +1090,17 @@ export default function AnnotatePage() {
                 </div>
               </div>
             </div>
-            <div className="border-t border-slate-200 px-3 py-2 text-[0.6875rem] text-slate-500">
-              {annotations.length} objeto(s) · zoom {Math.round(zoom * 100)}% ·{' '}
-              <span className="text-slate-400">
-                Ctrl + rueda para zoom
-                {canEdit ? ' · C completar y siguiente · S buscar similares · A aceptar sugerencias' : ''} · P/N anterior/siguiente
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-slate-200 px-3 py-2 text-[0.6875rem] text-slate-500">
+              <span>
+                {annotations.length} objeto(s) · zoom {Math.round(zoom * 100)}%
               </span>
+              <button
+                type="button"
+                className="text-sky-600 hover:text-sky-800 hover:underline"
+                onClick={() => setShowHotkeysHelp(true)}
+              >
+                Ver atajos de teclado (?)
+              </button>
             </div>
           </div>
         </section>
@@ -925,7 +1109,7 @@ export default function AnnotatePage() {
           <h2 className="border-b border-sky-200 px-4 py-3 text-[0.6875rem] font-semibold uppercase tracking-wider text-sky-800">
             Objetos en esta imagen
           </h2>
-          {canEdit && (
+          {canCreateLabelClass && canModifyAnnotations && (
             <div className="border-b border-sky-200 px-4 py-3">
               <label className="text-xs font-medium text-slate-600" htmlFor="quickClass">
                 Nueva clase rápida
@@ -949,7 +1133,7 @@ export default function AnnotatePage() {
               </div>
             </div>
           )}
-          {selected != null && annotations[selected] && canEdit && (
+          {selected != null && annotations[selected] && canModifyAnnotations && (
             <div className="border-b border-sky-200 px-4 py-3">
               <label className="text-xs font-medium text-slate-600">Clase de la caja seleccionada</label>
               <select
@@ -1088,7 +1272,7 @@ export default function AnnotatePage() {
                             Activa
                           </span>
                         )}
-                        {canEdit && (
+                        {canModifyAnnotations && (
                           <span
                             role="button"
                             tabIndex={0}
@@ -1120,6 +1304,116 @@ export default function AnnotatePage() {
         onClose={() => setShowSimilarModal(false)}
         onSave={(p) => { similarParamsRef.current = p }}
       />
+
+      {showHotkeysHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+          role="presentation"
+          onClick={() => setShowHotkeysHelp(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="hotkeys-title"
+            className="max-h-[min(90vh,32rem)] w-full max-w-md overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <h2 id="hotkeys-title" className="text-base font-semibold text-slate-800">
+                Atajos de teclado
+              </h2>
+              <button
+                type="button"
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Cerrar"
+                onClick={() => setShowHotkeysHelp(false)}
+              >
+                <i className="fa-solid fa-xmark" aria-hidden />
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Solo aplican cuando el foco no está en un campo de texto (excepto donde se indica).
+            </p>
+            <dl className="mt-4 space-y-3 text-sm">
+              <div>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-wider text-slate-400">
+                  Navegación
+                </dt>
+                <dd className="mt-1.5 space-y-1.5">
+                  <HotkeyRow keys="P" desc="Imagen anterior" />
+                  <HotkeyRow keys="N" desc="Imagen siguiente" />
+                </dd>
+              </div>
+              {(canUseLabelerShortcuts || canModifyAnnotations) && (
+                <div>
+                  <dt className="text-[0.6875rem] font-semibold uppercase tracking-wider text-slate-400">
+                    Cajas y flujo
+                  </dt>
+                  <dd className="mt-1.5 space-y-1.5">
+                    <HotkeyRow keys="Supr / Retroceso" desc="Eliminar la caja seleccionada" />
+                    <HotkeyRow
+                      keys="C"
+                      desc="Completar (o enviar a validación) e ir a la siguiente imagen"
+                    />
+                    <HotkeyRow
+                      keys="S"
+                      desc="Buscar objetos similares a la imagen anterior (requiere imagen anterior)"
+                    />
+                    <HotkeyRow
+                      keys="A"
+                      desc="Aceptar todas las sugerencias de detección (si hay sugerencias)"
+                    />
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-wider text-slate-400">
+                  Vista
+                </dt>
+                <dd className="mt-1.5 space-y-1.5">
+                  <HotkeyRow
+                    keys="Ctrl + rueda"
+                    desc="Zoom en el lienzo (también ⌘ + rueda en macOS)"
+                  />
+                </dd>
+              </div>
+              <div>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-wider text-slate-400">
+                  Ayuda
+                </dt>
+                <dd className="mt-1.5">
+                  <HotkeyRow keys="?" desc="Abrir o cerrar esta ventana" />
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-4 text-center text-xs text-slate-400">Esc para cerrar</p>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function HotkeyRow({ keys, desc }: { keys: string; desc: string }) {
+  const combo =
+    keys.includes(' / ') ? (
+      keys.split(' / ').map((part, i) => (
+        <span key={`${part}-${i}`}>
+          {i > 0 && <span className="mx-0.5 text-slate-400">/</span>}
+          <kbd className="rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[0.8125rem] shadow-sm">
+            {part}
+          </kbd>
+        </span>
+      ))
+    ) : (
+      <kbd className="rounded border border-slate-300 bg-slate-100 px-1.5 py-0.5 text-[0.8125rem] shadow-sm">
+        {keys}
+      </kbd>
+    )
+  return (
+    <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
+      <span className="shrink-0 font-mono text-xs font-medium text-slate-700">{combo}</span>
+      <span className="min-w-0 text-slate-600">{desc}</span>
     </div>
   )
 }
