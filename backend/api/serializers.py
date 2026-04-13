@@ -456,6 +456,8 @@ class DatasetVersionSerializer(serializers.ModelSerializer):
             "artifact_status",
             "artifact_storage_path",
             "artifact_size_bytes",
+            "exported_image_count",
+            "class_breakdown",
             "created_at",
             "updated_at",
             "images_count",
@@ -465,6 +467,8 @@ class DatasetVersionSerializer(serializers.ModelSerializer):
             "artifact_status",
             "artifact_storage_path",
             "artifact_size_bytes",
+            "exported_image_count",
+            "class_breakdown",
         )
 
 

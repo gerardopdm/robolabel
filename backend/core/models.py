@@ -295,6 +295,16 @@ class DatasetVersion(models.Model):
     )
     artifact_storage_path = models.CharField(max_length=512, blank=True)
     artifact_size_bytes = models.BigIntegerField(null=True, blank=True)
+    exported_image_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="Imágenes en el ZIP (train con aumentos + test + val).",
+    )
+    class_breakdown = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Lista [{label_class_id, name, images_count}] al crear la versión.",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

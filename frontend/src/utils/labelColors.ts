@@ -21,7 +21,7 @@ export const CLASS_COLOR_PALETTE = [
   '#15803d',
 ] as const
 
-function normalizeHex(hex: string): string {
+export function normalizeHex(hex: string): string {
   const h = hex.trim().toLowerCase()
   if (/^#[0-9a-f]{3}$/.test(h)) {
     return `#${h[1]}${h[1]}${h[2]}${h[2]}${h[3]}${h[3]}`

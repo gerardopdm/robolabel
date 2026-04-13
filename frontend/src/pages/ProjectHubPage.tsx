@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
@@ -14,8 +14,11 @@ type Stats = {
     total_images: number
     completed_images: number
     images_by_class?: { id: number; name: string; color_hex: string; image_count: number }[]
+    labelers?: { id: number; email: string; display_name: string }[]
   }[]
 }
+
+const HUB_REFRESH_MS = 60_000
 
 function SkeletonBlock({ className = '' }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-slate-200 ${className}`} />
@@ -176,18 +179,31 @@ export default function ProjectHubPage() {
   const canExportDataset = Boolean(user?.is_administrador || user?.is_asignador || user?.is_validador)
   const canEditProject = Boolean(user?.is_administrador)
 
+  const loadHub = useCallback(
+    async (showLoading: boolean) => {
+      if (!projectId) return
+      if (showLoading) setLoading(true)
+      try {
+        const [projectRes, statsRes] = await Promise.all([
+          api.get(`/projects/${projectId}/`),
+          api.get(`/projects/${projectId}/stats/`),
+        ])
+        setName(projectRes.data.name)
+        setDescription(projectRes.data.description || '')
+        setStats(statsRes.data)
+      } finally {
+        if (showLoading) setLoading(false)
+      }
+    },
+    [projectId],
+  )
+
   useEffect(() => {
     if (!projectId) return
-    setLoading(true)
-    Promise.all([
-      api.get(`/projects/${projectId}/`),
-      api.get(`/projects/${projectId}/stats/`),
-    ]).then(([projectRes, statsRes]) => {
-      setName(projectRes.data.name)
-      setDescription(projectRes.data.description || '')
-      setStats(statsRes.data)
-    }).finally(() => setLoading(false))
-  }, [projectId])
+    void loadHub(true)
+    const id = window.setInterval(() => void loadHub(false), HUB_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [projectId, loadHub])
 
   async function doExport() {
     if (!projectId) return
@@ -364,6 +380,22 @@ export default function ProjectHubPage() {
                     <div className="mt-2">
                       <ProgressBar completed={g.completed_images} total={g.total_images} />
                     </div>
+                    {(g.labelers?.length ?? 0) > 0 ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <span className="text-xs text-slate-500">Etiquetadores:</span>
+                        {g.labelers!.map((lb) => (
+                          <span
+                            key={lb.id}
+                            className="inline-flex max-w-full truncate rounded-full border border-slate-100 bg-slate-50 px-2 py-0.5 text-xs text-slate-600"
+                            title={lb.email}
+                          >
+                            {lb.display_name}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-slate-400">Sin etiquetadores asignados</p>
+                    )}
                     {g.images_by_class && g.images_by_class.length > 0 && (
                       <div className="mt-2">
                         <p className="text-xs text-slate-500">Imágenes con al menos una etiqueta por clase:</p>

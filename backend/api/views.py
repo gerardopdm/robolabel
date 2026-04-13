@@ -31,7 +31,12 @@ from core.models import (
     ValidationRecord,
 )
 
-from .export_service import build_yolo_zip_bytes, collect_images
+from .export_service import (
+    build_yolo_zip_bytes,
+    collect_images,
+    compute_class_breakdown,
+    count_exported_images_in_zip,
+)
 from .pagination import FlexiblePageSizePagination
 from .mixins import (
     filter_image_groups_for_user,
@@ -172,12 +177,43 @@ class ProjectViewSet(viewsets.ModelViewSet):
         ):
             counts_map[(row["image__group_id"], row["label_class_id"])] = row["image_count"]
 
+        S = ProjectImage.Status
+        labelers_by_group: dict[int, list[dict]] = {}
+        for a in (
+            GroupAssignment.objects.filter(
+                image_group__project=project,
+                image_group__deleted_at__isnull=True,
+            )
+            .select_related("labeler")
+            .order_by("image_group_id", "id")
+        ):
+            lb = a.labeler
+            display = " ".join(x for x in (lb.first_name or "", lb.last_name or "") if x).strip()
+            labelers_by_group.setdefault(a.image_group_id, []).append(
+                {
+                    "id": a.id,
+                    "email": lb.email,
+                    "display_name": display or lb.email,
+                },
+            )
+
         by_group = []
         for g in ImageGroup.objects.filter(project=project, deleted_at__isnull=True).annotate(
             ic=Count("images", filter=Q(images__deleted_at__isnull=True)),
             cc=Count(
                 "images",
-                filter=Q(images__deleted_at__isnull=True, images__status=ProjectImage.Status.COMPLETED),
+                filter=Q(images__deleted_at__isnull=True, images__status=S.COMPLETED),
+            ),
+            pendientes=Count(
+                "images",
+                filter=Q(
+                    images__deleted_at__isnull=True,
+                    images__status__in=(S.PENDING, S.IN_PROGRESS, S.REJECTED),
+                ),
+            ),
+            pending_validation=Count(
+                "images",
+                filter=Q(images__deleted_at__isnull=True, images__status=S.PENDING_VALIDATION),
             ),
         ):
             images_by_class = [
@@ -195,7 +231,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     "name": g.name,
                     "total_images": g.ic,
                     "completed_images": g.cc,
+                    "pendientes": g.pendientes,
+                    "pending_validation": g.pending_validation,
+                    "validadas": g.cc,
                     "images_by_class": images_by_class,
+                    "labelers": labelers_by_group.get(g.id, []),
                 },
             )
         return Response(
@@ -857,11 +897,15 @@ class DatasetVersionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         pid = self.kwargs["project_pk"]
-        return DatasetVersion.objects.filter(
-            project_id=pid,
-            project__company_id=self.request.user.company_id,
-            deleted_at__isnull=True,
-        ).annotate(images_count=Count("version_images"))
+        return (
+            DatasetVersion.objects.filter(
+                project_id=pid,
+                project__company_id=self.request.user.company_id,
+                deleted_at__isnull=True,
+            )
+            .annotate(images_count=Count("version_images"))
+            .order_by("-created_at")
+        )
 
     def get_permissions(self):
         if self.action == "export_yolov8":
@@ -900,6 +944,13 @@ class DatasetVersionViewSet(viewsets.ModelViewSet):
         try:
             aug = data.get("augmentations") or {}
             if data.get("split_train") is not None:
+                exported_n = count_exported_images_in_zip(
+                    images,
+                    split_train=data["split_train"],
+                    split_test=data["split_test"],
+                    split_val=data["split_val"],
+                    augmentations=aug,
+                )
                 raw, size = build_yolo_zip_bytes(
                     project,
                     images,
@@ -910,12 +961,18 @@ class DatasetVersionViewSet(viewsets.ModelViewSet):
                     augmentations=aug,
                 )
             else:
+                exported_n = count_exported_images_in_zip(
+                    images,
+                    train_val_split=float(data.get("train_val_split", 0.8)),
+                    augmentations=aug,
+                )
                 raw, size = build_yolo_zip_bytes(
                     project,
                     images,
                     train_val_split=float(data.get("train_val_split", 0.8)),
                     augmentations=aug,
                 )
+            class_breakdown = compute_class_breakdown(project, images)
         except ValueError as e:
             dv.artifact_status = DatasetVersion.ArtifactStatus.FAILED
             dv.save(update_fields=["artifact_status", "updated_at"])
@@ -946,8 +1003,19 @@ class DatasetVersionViewSet(viewsets.ModelViewSet):
         rel = str(Path("exports") / str(project.id) / zip_name).replace("\\", "/")
         dv.artifact_storage_path = rel
         dv.artifact_size_bytes = size
+        dv.exported_image_count = exported_n
+        dv.class_breakdown = class_breakdown
         dv.artifact_status = DatasetVersion.ArtifactStatus.READY
-        dv.save(update_fields=["artifact_storage_path", "artifact_size_bytes", "artifact_status", "updated_at"])
+        dv.save(
+            update_fields=[
+                "artifact_storage_path",
+                "artifact_size_bytes",
+                "exported_image_count",
+                "class_breakdown",
+                "artifact_status",
+                "updated_at",
+            ]
+        )
         out = DatasetVersionSerializer(dv, context={"request": request})
         return Response(out.data, status=status.HTTP_201_CREATED)
 

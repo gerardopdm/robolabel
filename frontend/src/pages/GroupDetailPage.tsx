@@ -87,6 +87,8 @@ function readGalleryPrefs(): { pageSize: PageSizeOption; density: GalleryDensity
   }
 }
 
+const GROUP_PAGE_REFRESH_MS = 60_000
+
 const MAX_BYTES = 10 * 1024 * 1024
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024
 const IMAGE_TYPES = new Set(['image/jpeg', 'image/png'])
@@ -186,30 +188,38 @@ export default function GroupDetailPage() {
       })
   }, [projectId, groupId])
 
-  const loadAssignmentsAndLabelers = useCallback(async () => {
-    if (!projectId || !groupId || !canManageLabelerAssignments) return
-    setAssignmentsLoading(true)
-    setAssignError(null)
-    try {
-      const [ar, ur] = await Promise.all([
-        api.get<{ results?: GroupAssignmentRow[] }>(
-          `/projects/${projectId}/groups/${groupId}/assignments/`,
-        ),
-        api.get<{ results?: UserListRow[] }>('/users/', { params: { page_size: 200 } }),
-      ])
-      const alist = ar.data.results ?? (ar.data as unknown as GroupAssignmentRow[])
-      setAssignments(Array.isArray(alist) ? alist : [])
-      const ulist = ur.data.results ?? (ur.data as unknown as UserListRow[])
-      const users = Array.isArray(ulist) ? ulist : []
-      setAssignableLabelers(users.filter((u) => u.is_etiquetador && u.is_active))
-    } catch (e) {
-      setAssignError(apiErrorMessage(e, 'No se pudieron cargar las asignaciones.'))
-      setAssignments([])
-      setAssignableLabelers([])
-    } finally {
-      setAssignmentsLoading(false)
-    }
-  }, [projectId, groupId, canManageLabelerAssignments])
+  const loadAssignmentsAndLabelers = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!projectId || !groupId || !canManageLabelerAssignments) return
+      const silent = Boolean(opts?.silent)
+      if (!silent) {
+        setAssignmentsLoading(true)
+        setAssignError(null)
+      }
+      try {
+        const [ar, ur] = await Promise.all([
+          api.get<{ results?: GroupAssignmentRow[] }>(
+            `/projects/${projectId}/groups/${groupId}/assignments/`,
+          ),
+          api.get<{ results?: UserListRow[] }>('/users/', { params: { page_size: 200 } }),
+        ])
+        const alist = ar.data.results ?? (ar.data as unknown as GroupAssignmentRow[])
+        setAssignments(Array.isArray(alist) ? alist : [])
+        const ulist = ur.data.results ?? (ur.data as unknown as UserListRow[])
+        const users = Array.isArray(ulist) ? ulist : []
+        setAssignableLabelers(users.filter((u) => u.is_etiquetador && u.is_active))
+      } catch (e) {
+        if (!silent) {
+          setAssignError(apiErrorMessage(e, 'No se pudieron cargar las asignaciones.'))
+          setAssignments([])
+          setAssignableLabelers([])
+        }
+      } finally {
+        if (!silent) setAssignmentsLoading(false)
+      }
+    },
+    [projectId, groupId, canManageLabelerAssignments],
+  )
 
   useEffect(() => {
     void loadAssignmentsAndLabelers()
@@ -224,10 +234,11 @@ export default function GroupDetailPage() {
   }, [pageSize, density])
 
   const loadGallery = useCallback(
-    async (forcedPage?: number) => {
+    async (forcedPage?: number, options?: { silent?: boolean }) => {
       if (!projectId || !groupId) return
       const p = forcedPage ?? page
-      setGalleryLoading(true)
+      const silent = Boolean(options?.silent)
+      if (!silent) setGalleryLoading(true)
       try {
         const params: Record<string, number | string> = { page: p, page_size: pageSize }
         if (tab === 'pendientes') params.status = 'pendientes'
@@ -253,7 +264,7 @@ export default function GroupDetailPage() {
           })
         }
       } finally {
-        setGalleryLoading(false)
+        if (!silent) setGalleryLoading(false)
       }
     },
     [projectId, groupId, page, pageSize, tab],
@@ -262,6 +273,23 @@ export default function GroupDetailPage() {
   useEffect(() => {
     void loadGallery()
   }, [loadGallery])
+
+  useEffect(() => {
+    if (!projectId || !groupId) return
+    const tick = window.setInterval(() => {
+      void loadGallery(undefined, { silent: true }).catch(() => {
+        /* refresco en segundo plano */
+      })
+      api
+        .get<{ name: string }>(`/projects/${projectId}/groups/${groupId}/`)
+        .then((r) => setGroupName(r.data.name))
+        .catch(() => {
+          /* ignorar errores de red en segundo plano */
+        })
+      if (canManageLabelerAssignments) void loadAssignmentsAndLabelers({ silent: true })
+    }, GROUP_PAGE_REFRESH_MS)
+    return () => clearInterval(tick)
+  }, [projectId, groupId, loadGallery, canManageLabelerAssignments, loadAssignmentsAndLabelers])
 
   useEffect(() => {
     if (!projectId) return

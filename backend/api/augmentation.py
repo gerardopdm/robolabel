@@ -140,3 +140,26 @@ def apply_augmentations_to_pair(
         if sigma > 0:
             out = im.filter(ImageFilter.GaussianBlur(radius=sigma))
             save_variant(out, boxes, f"blur_{sigma:.2f}".replace(".", "_"))
+
+
+def count_augmentation_variants_per_train_image(options: dict[str, Any] | None) -> int:
+    """Archivos extra por imagen de train (misma lógica que apply_augmentations_to_pair)."""
+    if not options:
+        return 0
+    n = 0
+    if options.get("flip_horizontal"):
+        n += 1
+    if options.get("flip_vertical"):
+        n += 1
+    angle = float(options.get("rotate_deg", 0) or 0)
+    if abs(angle) > 0.01:
+        n += 1
+    if options.get("brightness") and float(options["brightness"]) != 1.0:
+        n += 1
+    if options.get("contrast") and float(options["contrast"]) != 1.0:
+        n += 1
+    if options.get("blur_sigma"):
+        sigma = float(options["blur_sigma"])
+        if sigma > 0:
+            n += 1
+    return n

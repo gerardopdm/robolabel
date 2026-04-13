@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
-import { pickDistinctColor } from '../utils/labelColors'
+import { normalizeHex, pickDistinctColor } from '../utils/labelColors'
 
 type Lc = {
   id: number
@@ -51,6 +51,22 @@ export default function ClassesPage() {
     load()
   }
 
+  function hexForColorInput(hex: string): string {
+    const n = normalizeHex(hex.trim())
+    return /^#[0-9a-f]{6}$/.test(n) ? n : '#808080'
+  }
+
+  async function updateClassColor(classId: number, newHex: string) {
+    if (!projectId) return
+    try {
+      await api.patch(`/projects/${projectId}/classes/${classId}/`, { color_hex: newHex })
+      load()
+    } catch {
+      alert('No se pudo actualizar el color. Inténtalo de nuevo.')
+      load()
+    }
+  }
+
   const totalAnnotations = items.reduce((sum, c) => sum + (c.annotation_count ?? 0), 0)
 
   return (
@@ -79,12 +95,12 @@ export default function ClassesPage() {
         </form>
       )}
       {items.length > 0 && (
-        <p className="mt-6 max-w-2xl text-sm text-slate-500">
+        <p className="mt-6 max-w-4xl text-sm text-slate-500">
           Cada barra muestra la proporción de anotaciones de esa clase respecto al total del proyecto (
           <span className="font-medium text-slate-600 tabular-nums">{totalAnnotations}</span> en total).
         </p>
       )}
-      <ul className="mt-3 space-y-3">
+      <ul className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         {items.map((c) => {
           const count = c.annotation_count ?? 0
           const pct = totalAnnotations > 0 ? (count / totalAnnotations) * 100 : 0
@@ -92,17 +108,30 @@ export default function ClassesPage() {
           return (
             <li
               key={c.id}
-              className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+              className="min-w-0 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
               role="group"
               aria-label={`Clase ${c.name}`}
             >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                 <div className="flex min-w-0 flex-1 items-start gap-3">
-                  <span
-                    className="mt-0.5 h-10 w-10 shrink-0 rounded-lg shadow-inner ring-1 ring-black/5"
-                    style={{ backgroundColor: c.color_hex }}
-                    aria-hidden
-                  />
+                  {canEdit ? (
+                    <label className="mt-0.5 shrink-0">
+                      <span className="sr-only">Color de la clase {c.name}</span>
+                      <input
+                        type="color"
+                        value={hexForColorInput(c.color_hex)}
+                        onChange={(e) => updateClassColor(c.id, e.target.value)}
+                        className="h-10 w-14 cursor-pointer rounded border border-slate-200 bg-white p-0.5 shadow-inner"
+                        title="Cambiar color"
+                      />
+                    </label>
+                  ) : (
+                    <span
+                      className="mt-0.5 h-10 w-10 shrink-0 rounded-lg shadow-inner ring-1 ring-black/5"
+                      style={{ backgroundColor: c.color_hex }}
+                      aria-hidden
+                    />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                       <span className="text-base font-semibold text-slate-800">{c.name}</span>

@@ -247,3 +247,53 @@ def build_yolo_zip_bytes(
                     zf.write(fp, arcname=arc)
         raw = buf.getvalue()
         return raw, len(raw)
+
+
+def count_exported_images_in_zip(
+    images: list[ProjectImage],
+    *,
+    train_val_split: float | None = None,
+    split_train: float | None = None,
+    split_test: float | None = None,
+    split_val: float | None = None,
+    augmentations: dict | None = None,
+) -> int:
+    """Número de archivos de imagen en el ZIP YOLO (train + variantes + test + val)."""
+    imgs = list(images)
+    if not imgs:
+        return 0
+    r_train, r_test, r_val = _resolve_three_way_ratios(
+        train_val_split=train_val_split,
+        split_train=split_train,
+        split_test=split_test,
+        split_val=split_val,
+    )
+    train_list, test_list, val_list = _split_images_three_way(imgs, r_train, r_test, r_val)
+    k = aug.count_augmentation_variants_per_train_image(augmentations)
+    return len(train_list) * (1 + k) + len(test_list) + len(val_list)
+
+
+def compute_class_breakdown(project: Project, images: list[ProjectImage]) -> list[dict]:
+    """
+    Por cada clase del proyecto, cuántas imágenes de la versión tienen al menos una anotación de esa clase.
+    """
+    if not images:
+        return []
+    image_ids = [pi.id for pi in images]
+    classes = LabelClass.objects.filter(project=project).order_by("sort_index", "id")
+    out: list[dict] = []
+    for lc in classes:
+        n = (
+            ProjectImage.objects.filter(id__in=image_ids)
+            .filter(annotations__label_class_id=lc.id)
+            .distinct()
+            .count()
+        )
+        out.append(
+            {
+                "label_class_id": lc.id,
+                "name": lc.name,
+                "images_count": n,
+            }
+        )
+    return out

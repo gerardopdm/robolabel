@@ -10,11 +10,23 @@ type Group = {
   sort_order: number
 }
 
+type GroupStatsRow = {
+  id: number
+  name: string
+  total_images: number
+  completed_images: number
+  pendientes?: number
+  pending_validation?: number
+  validadas?: number
+  images_by_class?: { id: number; name: string; color_hex: string; image_count: number }[]
+  labelers?: { id: number; email: string; display_name: string }[]
+}
+
 export default function GroupsListPage() {
   const { projectId } = useParams()
   const { user } = useAuth()
   const [groups, setGroups] = useState<Group[]>([])
-  const [stats, setStats] = useState<{ groups: { id: number; name: string; total_images: number; completed_images: number }[] } | null>(null)
+  const [stats, setStats] = useState<{ groups: GroupStatsRow[] } | null>(null)
   const [newName, setNewName] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
@@ -80,10 +92,25 @@ export default function GroupsListPage() {
     }
   }
 
-  function pct(gid: number) {
-    const g = stats?.groups.find((x) => x.id === gid)
-    if (!g || !g.total_images) return 0
-    return Math.round((100 * g.completed_images) / g.total_images)
+  /** Imágenes que ya salieron de la cola del etiquetador (en validación o aprobadas). */
+  function pctEtiquetado(gid: number): number {
+    const row = stats?.groups.find((x) => x.id === gid)
+    if (!row || !row.total_images) return 0
+    const pv = row.pending_validation ?? 0
+    const val = row.validadas ?? row.completed_images ?? 0
+    return Math.round((100 * (pv + val)) / row.total_images)
+  }
+
+  /** Imágenes con validación completada (aprobadas). */
+  function pctValidacion(gid: number): number {
+    const row = stats?.groups.find((x) => x.id === gid)
+    if (!row || !row.total_images) return 0
+    const val = row.validadas ?? row.completed_images ?? 0
+    return Math.round((100 * val) / row.total_images)
+  }
+
+  function groupRow(gid: number): GroupStatsRow | undefined {
+    return stats?.groups.find((x) => x.id === gid)
   }
 
   return (
@@ -115,10 +142,12 @@ export default function GroupsListPage() {
         {groups.map((g) => (
           <div
             key={g.id}
-            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:shadow-md"
+            className={`group relative overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition-shadow hover:shadow-md ${
+              editingId === g.id ? '' : 'cursor-pointer'
+            }`}
           >
             {editingId === g.id ? (
-              <form onSubmit={saveRename} className="space-y-2">
+              <form onSubmit={saveRename} className="space-y-2 p-4">
                 <input
                   value={editName}
                   onChange={(e) => setEditName(e.target.value)}
@@ -146,37 +175,125 @@ export default function GroupsListPage() {
               </form>
             ) : (
               <>
-                <div className="flex items-start justify-between gap-2">
-                  <Link to={`/projects/${projectId}/groups/${g.id}`} className="min-w-0 flex-1">
-                    <h2 className="font-semibold text-slate-800 hover:text-sky-700">{g.name}</h2>
-                  </Link>
-                  {canEdit && (
-                    <div className="flex shrink-0 gap-1">
-                      <button
-                        type="button"
-                        onClick={() => startEdit(g)}
-                        disabled={busyId != null}
-                        className="rounded-lg px-2 py-1 text-xs text-sky-600 hover:bg-sky-50 disabled:opacity-50"
-                      >
-                        Renombrar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setHideTarget({ id: g.id, name: g.name })}
-                        disabled={busyId != null}
-                        className="rounded-lg px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
-                      >
-                        Ocultar
-                      </button>
-                    </div>
-                  )}
-                </div>
-                <Link to={`/projects/${projectId}/groups/${g.id}`} className="mt-2 block">
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full bg-emerald-500 transition-all" style={{ width: `${pct(g.id)}%` }} />
+                <Link
+                  to={`/projects/${projectId}/groups/${g.id}`}
+                  className="absolute inset-0 z-0 block rounded-xl"
+                  aria-label={`Abrir grupo ${g.name}`}
+                />
+                <div className="relative z-10 space-y-3 p-4 pointer-events-none">
+                  <div className="flex items-start justify-between gap-2">
+                    <h2 className="min-w-0 flex-1 font-semibold text-slate-800 transition-colors group-hover:text-sky-700">
+                      {g.name}
+                    </h2>
+                    {canEdit && (
+                      <div className="pointer-events-auto flex shrink-0 gap-1">
+                        <button
+                          type="button"
+                          onClick={() => startEdit(g)}
+                          disabled={busyId != null}
+                          className="rounded-lg px-2 py-1 text-xs text-sky-600 hover:bg-sky-50 disabled:opacity-50"
+                        >
+                          Renombrar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHideTarget({ id: g.id, name: g.name })}
+                          disabled={busyId != null}
+                          className="rounded-lg px-2 py-1 text-xs text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                        >
+                          Ocultar
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">{pct(g.id)}% etiquetado</p>
-                </Link>
+                  <div className="mt-2 space-y-3">
+                    <div>
+                      <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                        <span className="font-medium text-slate-600">Etiquetado</span>
+                        <span className="tabular-nums text-slate-500">{pctEtiquetado(g.id)}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full bg-sky-500 transition-all"
+                          style={{ width: `${pctEtiquetado(g.id)}%` }}
+                        />
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-slate-400">
+                        Enviadas a validación o ya validadas
+                      </p>
+                    </div>
+                    <div>
+                      <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+                        <span className="font-medium text-slate-600">Validación</span>
+                        <span className="tabular-nums text-slate-500">{pctValidacion(g.id)}%</span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div
+                          className="h-full bg-emerald-500 transition-all"
+                          style={{ width: `${pctValidacion(g.id)}%` }}
+                        />
+                      </div>
+                      <p className="mt-0.5 text-[11px] text-slate-400">Aprobadas por validador</p>
+                    </div>
+                  </div>
+                  {(() => {
+                    const row = groupRow(g.id)
+                    const pend = row?.pendientes ?? 0
+                    const pv = row?.pending_validation ?? 0
+                    const val = row?.validadas ?? row?.completed_images ?? 0
+                    const byClass = row?.images_by_class ?? []
+                    const labelers = row?.labelers ?? []
+                    return (
+                      <div className="mt-3 space-y-3 border-t border-slate-100 pt-3 text-left">
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                          <div className="rounded-lg bg-amber-50 px-2 py-1.5">
+                            <p className="font-medium text-amber-800">{pend}</p>
+                            <p className="text-[10px] leading-tight text-amber-700/80">Pendientes</p>
+                          </div>
+                          <div className="rounded-lg bg-sky-50 px-2 py-1.5">
+                            <p className="font-medium text-sky-800">{pv}</p>
+                            <p className="text-[10px] leading-tight text-sky-700/80">Por validar</p>
+                          </div>
+                          <div className="rounded-lg bg-emerald-50 px-2 py-1.5">
+                            <p className="font-medium text-emerald-800">{val}</p>
+                            <p className="text-[10px] leading-tight text-emerald-700/80">Validadas</p>
+                          </div>
+                        </div>
+                        {byClass.length > 0 && (
+                          <div>
+                            <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                              Clases (imágenes con etiqueta)
+                            </p>
+                            <ul className="flex flex-wrap gap-1.5">
+                              {byClass.map((c) => (
+                                <li
+                                  key={c.id}
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs text-slate-700"
+                                >
+                                  <span
+                                    className="h-2 w-2 shrink-0 rounded-full"
+                                    style={{ backgroundColor: c.color_hex || '#3B82F6' }}
+                                    title={c.name}
+                                  />
+                                  <span className="max-w-[140px] truncate">{c.name}</span>
+                                  <span className="tabular-nums text-slate-500">{c.image_count}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        <div className="text-xs text-slate-600">
+                          <span className="font-medium text-slate-500">Etiquetación: </span>
+                          {labelers.length === 0 ? (
+                            <span className="text-slate-400">sin asignar</span>
+                          ) : (
+                            <span>{labelers.map((l) => l.display_name).join(', ')}</span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                </div>
               </>
             )}
           </div>
