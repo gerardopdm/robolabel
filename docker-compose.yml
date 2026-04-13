@@ -60,11 +60,9 @@ services:
       - sqlite_data:/data
     expose:
       - "8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      mysql:
-        condition: service_healthy
+    # Sin depends_on a postgres/mysql: con perfiles esos servicios no existen en el
+    # proyecto cuando usas solo SQLite; Compose v2 falla con "undefined service".
+    # El entrypoint (docker/entrypoint.sh) espera TCP a la BD si DJANGO_DATABASE lo requiere.
     restart: unless-stopped
 
   nginx:
