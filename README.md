@@ -46,14 +46,30 @@ Recomendada para **servidor o VPS**. Incluye UI y API detrás de nginx; la base 
    ./scripts/docker-up.sh
    ```
 
-   Equivale a `docker compose --env-file .env.docker up -d --build`, añadiendo `--profile postgres` o `--profile mysql` si el asistente guardó `ROBOLABEL_COMPOSE_PROFILE` para PostgreSQL o MySQL.
+   Por debajo carga `.env.docker` y ejecuta `docker compose up -d --build` (con `--profile` si aplica a PostgreSQL/MySQL). No hace falta `docker compose --env-file`.
 
 4. Abre la interfaz en `http://localhost:<HTTP_PORT>/` (por defecto puerto **80**). La API está en `/api/v1/` en el mismo origen.
+
+#### Puerto visible desde fuera (host / VPS)
+
+Lo que ves “desde fuera” de Docker es el puerto del **equipo anfitrión** (tu PC o el VPS), no el puerto interno del contenedor. En `docker-compose.yml` el servicio **nginx** declara `ports: "${HTTP_PORT:-80}:80"`: se mapea **`<HTTP_PORT> en el host` → `80` dentro del contenedor** (nginx sigue escuchando en 80 por dentro; no hace falta tocarlo).
+
+- **Al instalar:** `docker-setup.sh` pregunta el puerto HTTP (por defecto **80**) y lo guarda en `.env.docker` como `HTTP_PORT=...`.
+- **Cambiarlo después:** edita `.env.docker` (por ejemplo `HTTP_PORT=8080`) y vuelve a levantar la pila para recrear el mapeo:
+
+  ```bash
+  ./scripts/docker-up.sh
+  ```
+
+  O manualmente: `set -a && source .env.docker && set +a` y luego `docker compose up -d --build` con el `--profile` que corresponda.
+
+Accederás entonces a `http://<IP-o-dominio>:<HTTP_PORT>/` (si usas **80**, el navegador suele omitir `:80`).
 
 5. **Datos de demostración** (opcional):
 
    ```bash
-   docker compose --env-file .env.docker exec backend python manage.py seed_demo
+   cd /opt/robolabel   # o la ruta donde clonaste el repo
+   docker compose exec backend python manage.py seed_demo
    ```
 
 **Archivos:** plantilla [`docker/env.docker.example`](docker/env.docker.example), orquestación [`docker-compose.yml`](docker-compose.yml), imágenes [`docker/Dockerfile.backend`](docker/Dockerfile.backend) y [`docker/Dockerfile.nginx`](docker/Dockerfile.nginx).
@@ -71,7 +87,34 @@ sudo systemctl enable --now docker
 sudo docker run --rm hello-world
 ```
 
-**Sin `sudo`** (opcional): `sudo usermod -aG docker "$USER"` y vuelve a iniciar sesión.
+**Compose v2 (`docker compose`):** hace falta para `./scripts/docker-up.sh`. Prueba primero:
+
+```bash
+sudo apt install -y docker-compose-plugin
+docker compose version
+```
+
+Si **`Unable to locate package docker-compose-plugin`** (pasa en muchas instalaciones mínimas o con solo `docker.io`), instala el **plugin manualmente** desde GitHub (compatible con el `docker` de Ubuntu):
+
+```bash
+# Ajusta la versión si quieres la última: https://github.com/docker/compose/releases
+COMPOSE_VER="v2.31.0"
+ARCH=$(uname -m)
+case "$ARCH" in
+  x86_64)  COMPOSE_ARCH="x86_64" ;;
+  aarch64) COMPOSE_ARCH="aarch64" ;;
+  *) echo "Arquitectura no soportada: $ARCH"; exit 1 ;;
+esac
+sudo mkdir -p /usr/local/lib/docker/cli-plugins
+sudo curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VER}/docker-compose-linux-${COMPOSE_ARCH}" \
+  -o /usr/local/lib/docker/cli-plugins/docker-compose
+sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
+docker compose version
+```
+
+Otra opción estable es usar el [repositorio oficial de Docker](https://docs.docker.com/engine/install/ubuntu/) (`docker-ce` + `docker-compose-plugin` desde ahí).
+
+**Sin `sudo`** con Docker (opcional): `sudo usermod -aG docker "$USER"` y vuelve a iniciar sesión.
 
 Tras actualizaciones del sistema pueden aparecer avisos de **nuevo kernel** (reinicia con `sudo reboot` cuando convenga) o **needrestart** para servicios con librerías antiguas.
 

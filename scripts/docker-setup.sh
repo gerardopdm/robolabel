@@ -125,11 +125,11 @@ echo "  ./scripts/docker-up.sh"
 echo ""
 echo "O manualmente (misma interpolación de variables que el script):"
 if [[ -n "$ROBOLABEL_COMPOSE_PROFILE" ]]; then
-  echo "  cd $REPO_ROOT && docker compose --env-file .env.docker --profile $ROBOLABEL_COMPOSE_PROFILE up -d --build"
+  echo "  cd $REPO_ROOT && set -a && source .env.docker && set +a && docker compose --profile $ROBOLABEL_COMPOSE_PROFILE up -d --build"
 else
-  echo "  cd $REPO_ROOT && docker compose --env-file .env.docker up -d --build"
+  echo "  cd $REPO_ROOT && ./scripts/docker-up.sh"
 fi
 echo ""
 echo "Interfaz: http://localhost:${HTTP_PORT}/  ·  API: http://localhost:${HTTP_PORT}/api/v1/"
-echo "Datos demo (opcional): docker compose --env-file .env.docker exec backend python manage.py seed_demo"
+echo "Datos demo (opcional): cd $REPO_ROOT && docker compose exec backend python manage.py seed_demo"
 echo ""
