@@ -1,0 +1,86 @@
+name: robolabel
+
+# RoboLabel — orquestación Docker (backend + frontend + base de datos opcional).
+# Configuración: copia docker/env.docker.example a .env.docker y ajusta, o ejecuta:
+#   ./scripts/docker-setup.sh
+#
+# Perfiles Compose:
+#   - Sin perfil: solo SQLite (volumen docker para el archivo).
+#   --profile postgres: añade PostgreSQL 16.
+#   --profile mysql: añade MySQL 8.
+#
+# Ejemplo:
+#   docker compose --profile postgres up -d --build
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-robolabel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-robolabel}
+      POSTGRES_DB: ${POSTGRES_DB:-robolabel}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 3s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+    restart: unless-stopped
+
+  mysql:
+    image: mysql:8.0
+    profiles: ["mysql"]
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-robolabel}
+      MYSQL_USER: ${MYSQL_USER:-robolabel}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-robolabel}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+    volumes:
+      - mysqldata:/var/lib/mysql
+    command: ["mysqld", "--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    env_file:
+      - .env.docker
+    volumes:
+      - media_data:/app/media
+      - sqlite_data:/data
+    expose:
+      - "8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.nginx
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    volumes:
+      - media_data:/app/media:ro
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  media_data:
+  sqlite_data:
+  pgdata:
+  mysqldata:

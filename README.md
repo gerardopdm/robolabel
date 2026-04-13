@@ -6,16 +6,118 @@ Aplicación web para gestionar proyectos de visión por computadora: grupos de i
 
 ## Stack
 
-- **Backend:** Python 3.12+, Django 5, Django REST Framework, SimpleJWT, SQLite (dev)
-- **Frontend:** React 19, TypeScript, Vite 8, Tailwind CSS 4, React Router 7
+- **Backend:** Python 3.12+, Django 5, Django REST Framework, SimpleJWT; base de datos **SQLite** (por defecto), **PostgreSQL** o **MySQL** (variables de entorno o Docker).
+- **Frontend:** React 19, TypeScript, Vite 8, Tailwind CSS 4, React Router 7.
 
-## Desarrollo local
+---
 
-### Backend
+## Instalación
+
+### Resumen: opciones
+
+Elige **una** vía según tu entorno. No hace falta seguir todas las secciones.
+
+| Opción | Descripción breve | Requisitos principales |
+|--------|-------------------|-------------------------|
+| **[A. Docker](#a-docker)** | Contenedores: backend (Gunicorn), nginx (frontend compilado) y base de datos opcional. El asistente pregunta si usas **SQLite**, **PostgreSQL** o **MySQL** y genera `.env.docker`. | Docker + Docker Compose v2 |
+| **[B. Script Linux](#b-script-linux)** | Sin Docker: venv Python, migraciones y `npm` en el repo. Base de datos: **SQLite** (por defecto del proyecto). | Git, Python 3.12+, Node.js (npm) |
+| **[C. Manual](#c-manual)** | Mismos pasos que el script pero ejecutados tú. Base de datos: **SQLite** por defecto; PostgreSQL/MySQL requieren configurar variables (ver `docker/env.docker.example` y `backend/config/settings.py`). | Git, Python 3.12+, Node.js (npm) |
+| **[D. Desarrollo local](#d-desarrollo-local)** | Backend y frontend en modo desarrollo (Vite con proxy al API). Pensado para programar en tu PC. | Python 3.12+, Node.js (npm) |
+
+**Referencias útiles en todas las vías:** API `http://<host>:<puerto>/api/v1/`, health `GET /api/v1/health/`. Usuarios demo (contraseña `demo1234`): `admin@demo.local`, `editor@demo.local`, `viewer@demo.local` (tras `seed_demo` si aplica).
+
+---
+
+### A. Docker
+
+Recomendada para **servidor o VPS**. Incluye UI y API detrás de nginx; la base de datos puede ser **SQLite** (archivo en volumen), **PostgreSQL 16** o **MySQL 8** según elijas en el asistente.
+
+1. Clona el repositorio y entra en la raíz del proyecto.
+2. Ejecuta el asistente (crea **`.env.docker`**, no lo subas a git):
+
+   ```bash
+   chmod +x scripts/docker-setup.sh scripts/docker-up.sh
+   ./scripts/docker-setup.sh
+   ```
+
+3. Levanta los servicios:
+
+   ```bash
+   ./scripts/docker-up.sh
+   ```
+
+   Equivale a `docker compose --env-file .env.docker up -d --build`, añadiendo `--profile postgres` o `--profile mysql` si el asistente guardó `ROBOLABEL_COMPOSE_PROFILE` para PostgreSQL o MySQL.
+
+4. Abre la interfaz en `http://localhost:<HTTP_PORT>/` (por defecto puerto **80**). La API está en `/api/v1/` en el mismo origen.
+
+5. **Datos de demostración** (opcional):
+
+   ```bash
+   docker compose --env-file .env.docker exec backend python manage.py seed_demo
+   ```
+
+**Archivos:** plantilla [`docker/env.docker.example`](docker/env.docker.example), orquestación [`docker-compose.yml`](docker-compose.yml), imágenes [`docker/Dockerfile.backend`](docker/Dockerfile.backend) y [`docker/Dockerfile.nginx`](docker/Dockerfile.nginx).
+
+**Producción:** contraseñas fuertes, `DJANGO_SECRET_KEY` y `DJANGO_ALLOWED_HOSTS` acordes a tu dominio o IP; HTTPS delante de nginx si expones el servicio.
+
+#### Instalar el motor Docker en Ubuntu (solo si aún no lo tienes)
+
+Con el paquete del repositorio de Ubuntu (`docker.io`):
+
+```bash
+sudo apt update
+sudo apt install -y docker.io
+sudo systemctl enable --now docker
+sudo docker run --rm hello-world
+```
+
+**Sin `sudo`** (opcional): `sudo usermod -aG docker "$USER"` y vuelve a iniciar sesión.
+
+Tras actualizaciones del sistema pueden aparecer avisos de **nuevo kernel** (reinicia con `sudo reboot` cuando convenga) o **needrestart** para servicios con librerías antiguas.
+
+---
+
+### B. Script Linux
+
+**Qué hace:** crea `backend/.venv`, instala dependencias Python, ejecuta migraciones, instala npm en `frontend/` y, con `--seed`, carga datos demo.
+
+**Requisitos:** Git, **Python 3.12+** y **Node.js (npm)**. Si el servidor ya tiene otras apps, instala Python y Node **en paralelo** al del sistema (no sustituyas el `python3` global sin saber el impacto). Guía detallada: [Preparar Git, Python y Node en Linux (sin Docker)](#preparar-git-python-y-node-en-linux-sin-docker).
+
+```bash
+sudo mkdir -p /opt/robolabel
+sudo chown "$USER:$USER" /opt/robolabel
+git clone <URL_DEL_REPOSITORIO> /opt/robolabel
+cd /opt/robolabel
+chmod +x scripts/install-linux.sh
+./scripts/install-linux.sh          # migraciones + npm
+./scripts/install-linux.sh --seed   # igual + seed_demo
+```
+
+Ayuda: `./scripts/install-linux.sh --help`.
+
+**Nota:** Por defecto el proyecto usa **SQLite** y ajustes de desarrollo. Para producción en red revisa `ALLOWED_HOSTS`, CORS, `SECRET_KEY` y servicio de estáticos/media.
+
+---
+
+### C. Manual
+
+Mismos pasos que el script, ejecutados a mano: venv en `backend/`, `pip install -r requirements.txt`, `migrate`, `seed_demo` (opcional), y en `frontend/` `npm install`.
+
+Sigue las secciones **Backend** y **Frontend** en [D. Desarrollo local](#d-desarrollo-local) (los comandos están en PowerShell; en Linux/macOS usa `source .venv/bin/activate` en lugar de `.\.venv\Scripts\activate`).
+
+**Nota:** Configuración por defecto orientada a desarrollo local (`DEBUG`, CORS hacia Vite, SQLite). Para otro motor de base de datos, configura las variables de entorno descritas en [`docker/env.docker.example`](docker/env.docker.example) (adaptadas a tu entorno sin Docker).
+
+---
+
+### D. Desarrollo local
+
+Uso típico en tu PC: dos terminales (backend + frontend). Base de datos **SQLite** en `backend/db.sqlite3`.
+
+#### Backend
 
 ```powershell
 cd backend
-python -m venv .venv   # opcional; el proyecto puede usar %USERPROFILE%\.venvs\robolabel
+python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
 python manage.py migrate
@@ -23,11 +125,12 @@ python manage.py seed_demo
 python manage.py runserver
 ```
 
+En Linux o macOS: `python3.12 -m venv .venv` y `source .venv/bin/activate`.
+
 - API: `http://127.0.0.1:8000/api/v1/`
 - Health: `GET /api/v1/health/`
-- Usuarios demo (contraseña `demo1234`): `admin@demo.local` (administrador), `editor@demo.local` (asignador + etiquetador), `viewer@demo.local` (validador)
 
-### Frontend
+#### Frontend
 
 ```powershell
 cd frontend
@@ -37,7 +140,7 @@ npm run dev
 
 Abre `http://localhost:5173`. El proxy de Vite reenvía `/api` y `/media` al backend en el puerto 8000.
 
-### Pruebas
+#### Pruebas
 
 ```powershell
 cd backend
@@ -48,6 +151,49 @@ python manage.py test
 cd frontend
 npm run build
 ```
+
+---
+
+### Preparar Git, Python y Node en Linux (sin Docker)
+
+Úsalo si sigues la **opción B** o **C** en un servidor donde quieres instalar herramientas sin romper otras aplicaciones.
+
+**Idea:** añade Python 3.12 y Node LTS **en paralelo** al del sistema; no fuerces que todo el SO use `python3.12` como único `python3` si otros servicios dependen de la versión anterior.
+
+#### Git
+
+```bash
+sudo apt update
+sudo apt install -y git
+```
+
+#### Python 3.12
+
+- **Ubuntu 24.04** (suele traer 3.12):
+
+  ```bash
+  sudo apt update
+  sudo apt install -y python3.12 python3.12-venv python3.12-dev build-essential
+  ```
+
+- **Ubuntu 22.04** (si no hay 3.12 en `apt`): PPA [deadsnakes](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) para instalar solo `python3.12`, `python3.12-venv`, etc., sin reemplazar el `python3` del sistema.
+
+RoboLabel usa un **entorno virtual** (`backend/.venv`) para aislar dependencias.
+
+#### Node.js (npm) con nvm (recomendado si ya hay otro Node en el servidor)
+
+[nvm](https://github.com/nvm-sh/nvm) instala Node solo para tu usuario (`~/.nvm`), sin tocar `/usr/bin/node`.
+
+```bash
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/master/install.sh | bash
+source ~/.bashrc
+nvm install --lts
+nvm use --lts
+```
+
+**systemd:** si ejecutas `node` desde un `.service`, usa la ruta absoluta al binario de nvm o define `PATH` en la unidad (systemd no carga `~/.bashrc`).
+
+---
 
 ## Documentación
 

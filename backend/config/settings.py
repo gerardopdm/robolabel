@@ -1,16 +1,28 @@
 """
 Django settings — RoboLabel
 """
+import os
 from datetime import timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "django-insecure-dev-only-change-in-production"
 
-DEBUG = True
+def _env_bool(key: str, default: bool = False) -> bool:
+    v = os.environ.get(key)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0", "testserver"]
+
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "django-insecure-dev-only-change-in-production")
+
+DEBUG = _env_bool("DJANGO_DEBUG", True)
+
+_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,0.0.0.0,testserver")
+ALLOWED_HOSTS = [h.strip() for h in _allowed_hosts.split(",") if h.strip()]
+
+USE_WHITENOISE = _env_bool("USE_WHITENOISE", False)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -28,6 +40,11 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    *(
+        ["whitenoise.middleware.WhiteNoiseMiddleware"]
+        if USE_WHITENOISE
+        else []
+    ),
     "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -56,12 +73,44 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+DJANGO_DATABASE = os.environ.get("DJANGO_DATABASE", "sqlite").strip().lower()
+if DJANGO_DATABASE not in ("sqlite", "postgresql", "mysql"):
+    DJANGO_DATABASE = "sqlite"
+
+if DJANGO_DATABASE == "sqlite":
+    _sqlite_path = os.environ.get("SQLITE_PATH", str(BASE_DIR / "db.sqlite3"))
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": _sqlite_path,
+        }
     }
-}
+elif DJANGO_DATABASE == "postgresql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("POSTGRES_DB", "robolabel"),
+            "USER": os.environ["POSTGRES_USER"],
+            "PASSWORD": os.environ["POSTGRES_PASSWORD"],
+            "HOST": os.environ.get("POSTGRES_HOST", "localhost"),
+            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+        }
+    }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.environ["MYSQL_DATABASE"],
+            "USER": os.environ["MYSQL_USER"],
+            "PASSWORD": os.environ["MYSQL_PASSWORD"],
+            "HOST": os.environ.get("MYSQL_HOST", "localhost"),
+            "PORT": os.environ.get("MYSQL_PORT", "3306"),
+            "OPTIONS": {
+                "charset": "utf8mb4",
+                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+            },
+        }
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -77,6 +126,16 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+if USE_WHITENOISE:
+    STORAGES = {
+        "default": {
+            "BACKEND": "django.core.files.storage.FileSystemStorage",
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+        },
+    }
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
