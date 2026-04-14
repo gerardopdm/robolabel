@@ -4,11 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DJANGO_SETTINGS_MODULE=config.settings
 
-# Algunos hosts dan DNS roto solo durante el build; forzar resolutores públicos en esta capa.
-RUN set -eux; \
-    rm -f /etc/resolv.conf; \
-    printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf; \
-    apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     libglib2.0-0 \
     libgomp1 \
@@ -20,10 +16,7 @@ RUN set -eux; \
 WORKDIR /app
 
 COPY backend/requirements.txt /app/requirements.txt
-RUN set -eux; \
-    rm -f /etc/resolv.conf; \
-    printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > /etc/resolv.conf; \
-    pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
 
 COPY backend/ /app/
 

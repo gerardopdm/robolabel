@@ -57,6 +57,15 @@ compose_cmd() {
   return 1
 }
 
+HOST_DNS_ARGS=""
+if [ -f /run/systemd/resolve/resolv.conf ]; then
+  while read -r _ dns_ip; do
+    if [ -n "$dns_ip" ] && [ "$dns_ip" != "127.0.0.53" ]; then
+      HOST_DNS_ARGS="$HOST_DNS_ARGS --dns $dns_ip"
+    fi
+  done < <(grep '^nameserver ' /run/systemd/resolve/resolv.conf)
+fi
+
 TEMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$TEMP_DIR"
@@ -90,6 +99,8 @@ fi
 section "Host Ubuntu"
 run_shell "Sistema operativo" "uname -a && echo && sed -n '1,20p' /etc/os-release"
 run_shell "Resolver del host" "sed -n '1,20p' /etc/resolv.conf"
+run_shell "Resolver uplink real del host" "if [ -f /run/systemd/resolve/resolv.conf ]; then sed -n '1,20p' /run/systemd/resolve/resolv.conf; else echo '/run/systemd/resolve/resolv.conf no existe'; fi"
+run_shell "Estado de systemd-resolved" "resolvectl status || true"
 run_shell "Ruta por defecto" "ip route || true"
 run_shell "Resolucion DNS del host" "getent hosts deb.debian.org && echo && getent ahostsv4 deb.debian.org || true"
 run_shell "Ping del host a deb.debian.org" "ping -c 2 -W 2 deb.debian.org"
@@ -98,7 +109,7 @@ section "Docker instalado"
 run_shell "Version de Docker" "docker version"
 run_shell "Informacion resumida del daemon" "docker info 2>/dev/null | sed -n '1,80p'"
 run_shell "Contextos de Docker" "docker context ls"
-run_shell "Buildx" "docker buildx version"
+run_shell "Buildx" "docker buildx version || echo 'buildx no disponible; docker build puede usar el builder legacy'"
 run_shell "Config del daemon" "if [ -f /etc/docker/daemon.json ]; then sed -n '1,120p' /etc/docker/daemon.json; else echo '/etc/docker/daemon.json no existe'; fi"
 run_shell "Estado del servicio Docker" "systemctl status docker --no-pager -n 20 || true"
 
@@ -110,16 +121,22 @@ run_shell "Compose backend/nginx" "sed -n '50,90p' docker-compose.yml"
 
 section "Prueba: docker run"
 run_shell \
-  "Contenedor base con resolv.conf y apt-get update" \
-  "docker run --rm python:3.12-slim-bookworm sh -lc 'echo \"-- /etc/resolv.conf --\"; cat /etc/resolv.conf; echo; echo \"-- getent hosts deb.debian.org --\"; getent hosts deb.debian.org || true; echo; echo \"-- apt-get update --\"; apt-get update -o Acquire::Retries=1'"
+  "Contenedor base con DNS del daemon" \
+  "docker run --rm python:3.12-slim-bookworm sh -lc 'set -e; echo \"-- /etc/resolv.conf --\"; cat /etc/resolv.conf; echo; echo \"-- getent hosts deb.debian.org --\"; getent hosts deb.debian.org; echo; echo \"-- apt-get update --\"; apt-get update -o Acquire::Retries=1'"
+
+if [ -n "$HOST_DNS_ARGS" ]; then
+  run_shell \
+    "Contenedor con DNS real del host" \
+    "docker run --rm $HOST_DNS_ARGS python:3.12-slim-bookworm sh -lc 'set -e; echo \"-- /etc/resolv.conf --\"; cat /etc/resolv.conf; echo; echo \"-- getent hosts deb.debian.org --\"; getent hosts deb.debian.org; echo; echo \"-- apt-get update --\"; apt-get update -o Acquire::Retries=1'"
+fi
 
 section "Prueba: docker build minimo"
 run_shell \
-  "Build con BuildKit por defecto" \
-  "docker build --no-cache --progress=plain -f \"$TEMP_DIR/Dockerfile\" \"$TEMP_DIR\""
+  "Build minimo con docker build" \
+  "docker build --no-cache -f \"$TEMP_DIR/Dockerfile\" \"$TEMP_DIR\""
 run_shell \
-  "Build con network=host" \
-  "docker build --no-cache --progress=plain --network=host -f \"$TEMP_DIR/Dockerfile\" \"$TEMP_DIR\""
+  "Build minimo con network=host" \
+  "docker build --no-cache --network=host -f \"$TEMP_DIR/Dockerfile\" \"$TEMP_DIR\""
 run_shell \
   "Build sin BuildKit" \
   "DOCKER_BUILDKIT=0 docker build --no-cache -f \"$TEMP_DIR/Dockerfile\" \"$TEMP_DIR\""
