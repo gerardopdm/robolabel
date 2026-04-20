@@ -3,7 +3,15 @@ from django.test import TestCase
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from core.models import Company, GroupAssignment, ImageGroup, LabelClass, Project, ProjectImage
+from core.models import (
+    Annotation,
+    Company,
+    GroupAssignment,
+    ImageGroup,
+    LabelClass,
+    Project,
+    ProjectImage,
+)
 
 User = get_user_model()
 
@@ -335,3 +343,150 @@ class ImageGalleryStatusFilterTests(TestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         ids = [x["id"] for x in r.data["results"]]
         self.assertEqual(ids, [self.im_done.id])
+
+
+class ClearGroupAnnotationsTests(TestCase):
+    def setUp(self):
+        self.company = Company.objects.create(name="CClr")
+        self.admin = User.objects.create_user(
+            email="adm_clr@test.com",
+            password="pass12345",
+            company=self.company,
+            is_administrador=True,
+        )
+        self.labeler = User.objects.create_user(
+            email="lbl_clr@test.com",
+            password="pass12345",
+            company=self.company,
+            is_etiquetador=True,
+        )
+        self.project = Project.objects.create(
+            company=self.company,
+            name="PClr",
+            task_type="object_detection",
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        self.lc = LabelClass.objects.create(
+            project=self.project,
+            name="obj",
+            color_hex="#ff0000",
+            sort_index=0,
+        )
+        self.group = ImageGroup.objects.create(project=self.project, name="GClr", sort_order=0)
+        S = ProjectImage.Status
+        self.im1 = ProjectImage.objects.create(
+            group=self.group,
+            storage_path="p/c1.jpg",
+            original_filename="a.jpg",
+            mime_type="image/jpeg",
+            file_size_bytes=1,
+            width_px=10,
+            height_px=10,
+            status=S.PENDING_VALIDATION,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        Annotation.objects.create(
+            image=self.im1,
+            label_class=self.lc,
+            x="0.1",
+            y="0.2",
+            width="0.3",
+            height="0.4",
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        self.client = APIClient()
+
+    def test_clear_requires_assignador_or_admin(self):
+        self.client.force_authenticate(user=self.labeler)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.pk}/groups/{self.group.pk}/clear-annotations/",
+        )
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_clear_removes_annotations_and_sets_pending(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.pk}/groups/{self.group.pk}/clear-annotations/",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["deleted_annotations"], 1)
+        self.assertEqual(r.data["images_updated"], 1)
+        self.im1.refresh_from_db()
+        self.assertEqual(self.im1.status, ProjectImage.Status.PENDING)
+        self.assertEqual(Annotation.objects.filter(image=self.im1).count(), 0)
+
+
+class DeleteAllGroupImagesTests(TestCase):
+    def setUp(self):
+        self.company = Company.objects.create(name="CDelImg")
+        self.admin = User.objects.create_user(
+            email="adm_delimg@test.com",
+            password="pass12345",
+            company=self.company,
+            is_administrador=True,
+        )
+        self.labeler = User.objects.create_user(
+            email="lbl_delimg@test.com",
+            password="pass12345",
+            company=self.company,
+            is_etiquetador=True,
+        )
+        self.project = Project.objects.create(
+            company=self.company,
+            name="PDelImg",
+            task_type="object_detection",
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        self.lc = LabelClass.objects.create(
+            project=self.project,
+            name="obj",
+            color_hex="#ff0000",
+            sort_index=0,
+        )
+        self.group = ImageGroup.objects.create(project=self.project, name="GDelImg", sort_order=0)
+        S = ProjectImage.Status
+        self.im1 = ProjectImage.objects.create(
+            group=self.group,
+            storage_path="p/d1.jpg",
+            original_filename="a.jpg",
+            mime_type="image/jpeg",
+            file_size_bytes=1,
+            width_px=10,
+            height_px=10,
+            status=S.COMPLETED,
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        Annotation.objects.create(
+            image=self.im1,
+            label_class=self.lc,
+            x="0.1",
+            y="0.2",
+            width="0.3",
+            height="0.4",
+            created_by=self.admin,
+            updated_by=self.admin,
+        )
+        self.client = APIClient()
+
+    def test_delete_all_requires_assignador_or_admin(self):
+        self.client.force_authenticate(user=self.labeler)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.pk}/groups/{self.group.pk}/delete-all-images/",
+        )
+        self.assertEqual(r.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_delete_all_soft_deletes_and_removes_annotations(self):
+        self.client.force_authenticate(user=self.admin)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.pk}/groups/{self.group.pk}/delete-all-images/",
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual(r.data["deleted_images"], 1)
+        self.im1.refresh_from_db()
+        self.assertIsNotNone(self.im1.deleted_at)
+        self.assertEqual(Annotation.objects.filter(image=self.im1).count(), 0)

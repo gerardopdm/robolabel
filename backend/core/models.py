@@ -116,6 +116,17 @@ class ImageGroup(models.Model):
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="groups")
     name = models.CharField(max_length=255)
     sort_order = models.IntegerField(default=0)
+    detection_filter = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        help_text="Active detection filter name (empty = none).",
+    )
+    detection_filter_params = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Parameters for the selected detection filter (schema varies per filter).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)

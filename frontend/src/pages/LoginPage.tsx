@@ -3,13 +3,13 @@ import { Navigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function LoginPage() {
-  const { login, access, loading } = useAuth()
+  const { login, access, loading, sessionExpired } = useAuth()
   const [email, setEmail] = useState('admin@demo.local')
   const [password, setPassword] = useState('demo1234')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
-  if (!loading && access) {
+  if (!loading && access && !sessionExpired) {
     return <Navigate to="/projects" replace />
   }
 
@@ -31,6 +31,11 @@ export default function LoginPage() {
       <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 shadow-sm">
         <h1 className="text-2xl font-bold text-slate-800">RoboLabel</h1>
         <p className="mt-1 text-sm text-slate-500">Inicia sesión en tu cuenta</p>
+        {sessionExpired && (
+          <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Tu sesión ha expirado. Por favor, inicia sesión de nuevo.
+          </div>
+        )}
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
             <label className="block text-sm font-medium text-slate-700">Email</label>

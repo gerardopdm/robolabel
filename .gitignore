@@ -27,6 +27,9 @@ frontend/dist/
 Thumbs.db
 *.sw?
 
+# ML models
+models/
+
 # Cursor / local tooling
 .cursor/
 *.log

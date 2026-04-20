@@ -2,11 +2,15 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import GalleryImagePreview, { type AnnotationPreview } from '../components/GalleryImagePreview'
 import HideGroupModal from '../components/HideGroupModal'
+import FilterConfigPanel from '../components/FilterConfigPanel'
+import BatchFilterModal from '../components/BatchFilterModal'
+import ClearGroupLabelsModal from '../components/ClearGroupLabelsModal'
+import DeleteAllGroupImagesModal from '../components/DeleteAllGroupImagesModal'
 import api from '../api/client'
 import { useAuth } from '../contexts/AuthContext'
 import { apiErrorMessage } from '../utils/apiErrorMessage'
 
-type LabelClassLite = { id: number; color_hex: string }
+type LabelClassLite = { id: number; name: string; color_hex: string }
 
 type GroupAssignmentRow = {
   id: number
@@ -137,6 +141,8 @@ export default function GroupDetailPage() {
     pending_validation: 0,
     validadas: 0,
   })
+  /** Total de imágenes en el grupo (todas las pestañas). */
+  const [totalImagesInGroup, setTotalImagesInGroup] = useState(0)
   const [galleryLoading, setGalleryLoading] = useState(false)
   const [density, setDensity] = useState<GalleryDensity>(() => readGalleryPrefs().density)
 
@@ -154,6 +160,18 @@ export default function GroupDetailPage() {
   const [assignError, setAssignError] = useState<string | null>(null)
   const [selectedLabelerId, setSelectedLabelerId] = useState<string>('')
   const [assignSubmitting, setAssignSubmitting] = useState(false)
+
+  const [showFilterModal, setShowFilterModal] = useState(false)
+  const [groupFilterName, setGroupFilterName] = useState('')
+  const [groupFilterParams, setGroupFilterParams] = useState<Record<string, number | string>>({})
+  const [filterSaving, setFilterSaving] = useState(false)
+  const [showBatchFilterModal, setShowBatchFilterModal] = useState(false)
+  const [showClearLabelsModal, setShowClearLabelsModal] = useState(false)
+  const [clearLabelsPending, setClearLabelsPending] = useState(false)
+  const [clearLabelsError, setClearLabelsError] = useState<string | null>(null)
+  const [showDeleteAllImagesModal, setShowDeleteAllImagesModal] = useState(false)
+  const [deleteAllImagesPending, setDeleteAllImagesPending] = useState(false)
+  const [deleteAllImagesError, setDeleteAllImagesError] = useState<string | null>(null)
 
   useEffect(() => {
     if (assignError) setShowAssignmentsModal(true)
@@ -180,8 +198,14 @@ export default function GroupDetailPage() {
     setGroupLoadError(null)
     setGroupName(null)
     api
-      .get<{ name: string }>(`/projects/${projectId}/groups/${groupId}/`)
-      .then((r) => setGroupName(r.data.name))
+      .get<{ name: string; detection_filter?: string; detection_filter_params?: Record<string, number | string> }>(
+        `/projects/${projectId}/groups/${groupId}/`,
+      )
+      .then((r) => {
+        setGroupName(r.data.name)
+        setGroupFilterName(r.data.detection_filter ?? '')
+        setGroupFilterParams(r.data.detection_filter_params ?? {})
+      })
       .catch((e: { response?: { status?: number } }) => {
         if (e.response?.status === 404) setGroupLoadError('notfound')
         else setGroupLoadError('error')
@@ -250,6 +274,7 @@ export default function GroupDetailPage() {
         setTotalCount(typeof r.data.count === 'number' ? r.data.count : list.length)
         const gc = r.data.group_image_counts as
           | {
+              all?: number
               pendientes?: number
               pending_validation?: number
               validadas?: number
@@ -257,11 +282,17 @@ export default function GroupDetailPage() {
             }
           | undefined
         if (gc && typeof gc.pendientes === 'number') {
+          const pend = gc.pendientes
+          const pv = gc.pending_validation ?? 0
+          const val = gc.validadas ?? gc.completed ?? 0
           setGroupCounts({
-            pendientes: gc.pendientes,
-            pending_validation: gc.pending_validation ?? 0,
-            validadas: gc.validadas ?? gc.completed ?? 0,
+            pendientes: pend,
+            pending_validation: pv,
+            validadas: val,
           })
+          const all =
+            typeof gc.all === 'number' ? gc.all : pend + pv + val
+          setTotalImagesInGroup(all)
         }
       } finally {
         if (!silent) setGalleryLoading(false)
@@ -502,6 +533,52 @@ export default function GroupDetailPage() {
     }
   }
 
+  async function saveFilterConfig(filterName: string, params: Record<string, number | string>) {
+    if (!projectId || !groupId) return
+    setFilterSaving(true)
+    try {
+      await api.patch(`/projects/${projectId}/groups/${groupId}/`, {
+        detection_filter: filterName,
+        detection_filter_params: params,
+      })
+      setGroupFilterName(filterName)
+      setGroupFilterParams(params)
+    } finally {
+      setFilterSaving(false)
+    }
+  }
+
+  async function executeClearGroupLabels() {
+    if (!projectId || !groupId) return
+    setClearLabelsPending(true)
+    setClearLabelsError(null)
+    try {
+      await api.post(`/projects/${projectId}/groups/${groupId}/clear-annotations/`)
+      setShowClearLabelsModal(false)
+      void loadGallery()
+    } catch (e) {
+      setClearLabelsError(apiErrorMessage(e, 'No se pudieron quitar las etiquetas.'))
+    } finally {
+      setClearLabelsPending(false)
+    }
+  }
+
+  async function executeDeleteAllGroupImages() {
+    if (!projectId || !groupId) return
+    setDeleteAllImagesPending(true)
+    setDeleteAllImagesError(null)
+    try {
+      await api.post(`/projects/${projectId}/groups/${groupId}/delete-all-images/`)
+      setShowDeleteAllImagesModal(false)
+      setPage(1)
+      void loadGallery(1)
+    } catch (e) {
+      setDeleteAllImagesError(apiErrorMessage(e, 'No se pudieron borrar las imágenes.'))
+    } finally {
+      setDeleteAllImagesPending(false)
+    }
+  }
+
   const assignedLabelerIds = new Set(assignments.map((a) => a.labeler))
   const labelersForSelect = assignableLabelers.filter((u) => !assignedLabelerIds.has(u.id))
 
@@ -617,6 +694,53 @@ export default function GroupDetailPage() {
             className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-800 shadow-sm hover:bg-slate-50"
           >
             Subir imágenes o video
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowFilterModal(true)}
+            disabled={filterSaving}
+            className={`rounded-lg border px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50 ${
+              groupFilterName
+                ? 'border-teal-300 bg-teal-50 text-teal-800'
+                : 'border-slate-200 bg-white text-slate-800'
+            }`}
+          >
+            <i className="fa-solid fa-filter mr-1.5" aria-hidden />
+            {groupFilterName ? 'Filtro configurado' : 'Configurar filtro'}
+          </button>
+          {groupFilterName && (
+            <button
+              type="button"
+              onClick={() => setShowBatchFilterModal(true)}
+              className="rounded-lg border border-teal-300 bg-teal-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-teal-700"
+            >
+              <i className="fa-solid fa-bolt mr-1.5" aria-hidden />
+              Aplicar filtro a todas
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              setClearLabelsError(null)
+              setShowClearLabelsModal(true)
+            }}
+            disabled={totalImagesInGroup === 0}
+            className="rounded-lg border border-rose-200 bg-white px-4 py-2 text-sm font-medium text-rose-800 shadow-sm hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <i className="fa-solid fa-eraser mr-1.5" aria-hidden />
+            Quitar etiquetas de todas
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteAllImagesError(null)
+              setShowDeleteAllImagesModal(true)
+            }}
+            disabled={totalImagesInGroup === 0}
+            className="rounded-lg border border-rose-300 bg-white px-4 py-2 text-sm font-medium text-rose-900 shadow-sm hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <i className="fa-solid fa-trash-can mr-1.5" aria-hidden />
+            Borrar todas las imágenes
           </button>
         </div>
       )}
@@ -872,7 +996,7 @@ export default function GroupDetailPage() {
       )}
 
       {showVideoModal && pendingVideo && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <h2 className="text-lg font-bold text-slate-800">Extraer frames del video</h2>
             <p className="mt-2 text-sm text-slate-600">
@@ -1117,6 +1241,55 @@ export default function GroupDetailPage() {
         onClose={() => !hideModalPending && setShowHideModal(false)}
         onConfirm={executeHideGroup}
       />
+
+      {projectId && groupId && (
+        <FilterConfigPanel
+          open={showFilterModal}
+          projectId={projectId}
+          groupId={groupId}
+          currentFilterName={groupFilterName}
+          currentFilterParams={groupFilterParams}
+          onClose={() => setShowFilterModal(false)}
+          onSave={(name, params) => void saveFilterConfig(name, params)}
+        />
+      )}
+
+      {projectId && groupId && groupFilterName && (
+        <BatchFilterModal
+          open={showBatchFilterModal}
+          projectId={projectId}
+          groupId={groupId}
+          filterName={groupFilterName}
+          filterParams={groupFilterParams}
+          labelClasses={labelClasses.map((c) => ({ id: c.id, name: c.name }))}
+          onClose={() => setShowBatchFilterModal(false)}
+          onFinished={() => void loadGallery()}
+        />
+      )}
+
+      {groupName && projectId && groupId && (
+        <ClearGroupLabelsModal
+          open={showClearLabelsModal}
+          groupName={groupName}
+          imageCount={totalImagesInGroup}
+          pending={clearLabelsPending}
+          errorMessage={clearLabelsError}
+          onClose={() => !clearLabelsPending && setShowClearLabelsModal(false)}
+          onConfirm={executeClearGroupLabels}
+        />
+      )}
+
+      {groupName && projectId && groupId && (
+        <DeleteAllGroupImagesModal
+          open={showDeleteAllImagesModal}
+          groupName={groupName}
+          imageCount={totalImagesInGroup}
+          pending={deleteAllImagesPending}
+          errorMessage={deleteAllImagesError}
+          onClose={() => !deleteAllImagesPending && setShowDeleteAllImagesModal(false)}
+          onConfirm={executeDeleteAllGroupImages}
+        />
+      )}
     </div>
   )
 }

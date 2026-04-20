@@ -73,6 +73,8 @@ def user_can_annotate_image(user, image: ProjectImage) -> bool:
     S = ProjectImage.Status
     if getattr(user, "is_administrador", False):
         return True
+    if getattr(user, "is_asignador", False):
+        return True
     if getattr(user, "is_validador", False) and s == S.PENDING_VALIDATION:
         return True
     if getattr(user, "is_etiquetador", False):

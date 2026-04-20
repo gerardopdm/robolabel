@@ -156,7 +156,9 @@ REST_FRAMEWORK = {
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": False,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
@@ -181,3 +183,6 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 500 * 1024 * 1024
 
 # Similarity search engine: "template_matching" | "embedding" | "llm_vision"
 SIMILARITY_ENGINE = "template_matching"
+
+# Directory containing YOLO .pt model files available for the YOLO detection filter.
+YOLO_MODELS_DIR = BASE_DIR.parent / "models"

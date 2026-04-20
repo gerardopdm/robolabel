@@ -16,9 +16,9 @@ import ProjectsPage from './pages/ProjectsPage'
 import UsersPage from './pages/UsersPage'
 
 function PrivateLayout() {
-  const { access, loading } = useAuth()
+  const { access, loading, sessionExpired } = useAuth()
   if (loading) return <div className="p-8 text-slate-500">Cargando…</div>
-  if (!access) return <Navigate to="/login" replace />
+  if (!access || sessionExpired) return <Navigate to="/login" replace />
   return <AppShell />
 }
 

@@ -106,7 +106,7 @@ export default function FindSimilarModal({ open, currentParams, onClose, onSave 
   return (
     <dialog
       ref={dialogRef}
-      className="m-auto w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-0 shadow-2xl backdrop:bg-black/40"
+      className="robolabel-dialog w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-0 shadow-2xl backdrop:bg-black/40"
       onCancel={onClose}
     >
       <div className="border-b border-slate-200 px-6 py-4">

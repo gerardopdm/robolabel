@@ -47,6 +47,16 @@ urlpatterns = [
         name="upload-video",
     ),
     path(
+        "projects/<int:project_pk>/groups/<int:group_pk>/clear-annotations/",
+        views.clear_group_annotations,
+        name="clear-group-annotations",
+    ),
+    path(
+        "projects/<int:project_pk>/groups/<int:group_pk>/delete-all-images/",
+        views.delete_all_group_images,
+        name="delete-all-group-images",
+    ),
+    path(
         "projects/<int:project_pk>/groups/<int:group_pk>/images/",
         views.ProjectImageViewSet.as_view({"get": "list", "post": "create"}),
     ),
@@ -74,6 +84,19 @@ urlpatterns = [
         "projects/<int:project_pk>/groups/<int:group_pk>/images/<int:image_pk>/find-similar/",
         views.find_similar_objects,
         name="find-similar-objects",
+    ),
+    path("filters/", views.list_filters, name="list-filters"),
+    path("yolo-models/", views.list_yolo_models, name="list-yolo-models"),
+    path("yolo-models/<str:model_name>/classes/", views.yolo_model_classes, name="yolo-model-classes"),
+    path(
+        "projects/<int:project_pk>/groups/<int:group_pk>/images/<int:image_pk>/apply-filter/",
+        views.apply_filter,
+        name="apply-filter",
+    ),
+    path(
+        "projects/<int:project_pk>/groups/<int:group_pk>/filter-preview/",
+        views.filter_preview,
+        name="filter-preview",
     ),
     path(
         "projects/<int:project_pk>/dataset-versions/",

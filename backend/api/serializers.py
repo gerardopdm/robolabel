@@ -155,7 +155,16 @@ class ProjectSerializer(serializers.ModelSerializer):
 class ImageGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = ImageGroup
-        fields = ("id", "project", "name", "sort_order", "created_at", "updated_at")
+        fields = (
+            "id",
+            "project",
+            "name",
+            "sort_order",
+            "detection_filter",
+            "detection_filter_params",
+            "created_at",
+            "updated_at",
+        )
         read_only_fields = ("project",)
 
     def create(self, validated_data):
@@ -441,6 +450,13 @@ class DetectedObjectSerializer(serializers.Serializer):
     width = serializers.FloatField()
     height = serializers.FloatField()
     confidence = serializers.FloatField()
+    class_name = serializers.CharField(required=False, default="", allow_blank=True)
+
+
+class ApplyFilterRequestSerializer(serializers.Serializer):
+    filter_name = serializers.CharField(max_length=64)
+    params = serializers.DictField(default=dict)
+    label_class_id = serializers.IntegerField(required=False, allow_null=True)
 
 
 class DatasetVersionSerializer(serializers.ModelSerializer):

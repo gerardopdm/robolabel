@@ -9,7 +9,9 @@ from pathlib import Path
 import cv2
 from django.conf import settings
 from django.db.models import Count, Prefetch, Q
+from django.db import transaction
 from django.http import FileResponse, Http404
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action, api_view, permission_classes
@@ -55,6 +57,7 @@ from .permissions import (
 from .serializers import (
     AnnotationSerializer,
     AnnotationWriteItemSerializer,
+    ApplyFilterRequestSerializer,
     DatasetVersionCreateSerializer,
     DatasetVersionSerializer,
     DetectedObjectSerializer,
@@ -587,7 +590,10 @@ def image_neighbors(request, pk):
 
 
 class AnnotationViewSet(viewsets.ModelViewSet):
+    """Anotaciones de una sola imagen: siempre devolver la lista completa (sin paginar)."""
+
     serializer_class = AnnotationSerializer
+    pagination_class = None
 
     def get_permissions(self):
         return [IsAuthenticated(), IsCompanyMember()]
@@ -786,6 +792,64 @@ def find_similar_objects(request, project_pk, group_pk, image_pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsCompanyMember, IsAsignadorOrAdministrador])
+def clear_group_annotations(request, project_pk, group_pk):
+    """Elimina todas las anotaciones del grupo y deja cada imagen en estado pendiente."""
+    group = get_object_or_404(
+        ImageGroup,
+        pk=group_pk,
+        project_id=project_pk,
+        project__company_id=request.user.company_id,
+        deleted_at__isnull=True,
+    )
+    qs = ProjectImage.objects.filter(group=group, deleted_at__isnull=True)
+    image_ids = list(qs.values_list("id", flat=True))
+    if not image_ids:
+        return Response({"deleted_annotations": 0, "images_updated": 0})
+
+    ann_qs = Annotation.objects.filter(image_id__in=image_ids)
+    n_ann = ann_qs.count()
+    with transaction.atomic():
+        ann_qs.delete()
+        updated = qs.update(
+            status=ProjectImage.Status.PENDING,
+            updated_by=request.user,
+        )
+
+    return Response(
+        {
+            "deleted_annotations": n_ann,
+            "images_updated": updated,
+        },
+    )
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsCompanyMember, IsAsignadorOrAdministrador])
+def delete_all_group_images(request, project_pk, group_pk):
+    """Marca como eliminadas todas las imágenes del grupo (soft delete) y borra anotaciones asociadas."""
+    group = get_object_or_404(
+        ImageGroup,
+        pk=group_pk,
+        project_id=project_pk,
+        project__company_id=request.user.company_id,
+        deleted_at__isnull=True,
+    )
+    qs = ProjectImage.objects.filter(group=group, deleted_at__isnull=True)
+    image_ids = list(qs.values_list("id", flat=True))
+    if not image_ids:
+        return Response({"deleted_images": 0})
+
+    now = timezone.now()
+    with transaction.atomic():
+        Annotation.objects.filter(image_id__in=image_ids).delete()
+        ValidationRecord.objects.filter(image_id__in=image_ids).delete()
+        n = qs.update(deleted_at=now, updated_by=request.user, updated_at=now)
+
+    return Response({"deleted_images": n})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsCompanyMember, IsAsignadorOrAdministrador])
 def upload_video(request, project_pk, group_pk):
     """Extract frames from a video and create ProjectImage records."""
     group = ImageGroup.objects.select_related("project").get(
@@ -889,6 +953,312 @@ def upload_video(request, project_pk, group_pk):
         },
         status=status.HTTP_201_CREATED,
     )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_filters(request):
+    """Return every registered detection filter with its param specs."""
+    from .filters import get_available_filters
+
+    filters = get_available_filters()
+    data = [f.to_dict() for f in filters.values()]
+    return Response(data)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_yolo_models(request):
+    """Return available YOLO .pt model files."""
+    from .filters.yolo_detection import list_model_files
+
+    return Response({"models": list_model_files()})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def yolo_model_classes(request, model_name):
+    """Return the class names of a specific YOLO model."""
+    from .filters.yolo_detection import get_model_class_names
+
+    classes = get_model_class_names(model_name)
+    return Response({"model": model_name, "classes": classes})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsCompanyMember])
+def apply_filter(request, project_pk, group_pk, image_pk):
+    """Run a detection filter on a single image and return bounding boxes."""
+    ser = ApplyFilterRequestSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+
+    company_id = request.user.company_id
+
+    try:
+        target_image = ProjectImage.objects.select_related("group__project").get(
+            pk=image_pk,
+            group_id=group_pk,
+            group__project_id=project_pk,
+            deleted_at__isnull=True,
+            group__deleted_at__isnull=True,
+            group__project__company_id=company_id,
+        )
+    except ProjectImage.DoesNotExist:
+        return Response({"detail": "Imagen no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    if not user_can_access_project_image(request.user, target_image):
+        return Response({"detail": "Imagen no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    target_path = Path(settings.MEDIA_ROOT) / target_image.storage_path
+    if not target_path.is_file():
+        return Response(
+            {"detail": "No se encontró el archivo de imagen en disco."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    from .filters import get_filter
+
+    try:
+        filt = get_filter(ser.validated_data["filter_name"])
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    params = filt.coerce_params(ser.validated_data.get("params", {}))
+    detections = filt.apply(target_path, params)
+
+    label_class_id = ser.validated_data.get("label_class_id")
+    out = DetectedObjectSerializer(
+        [
+            {
+                "label_class_id": label_class_id or 0,
+                "x": d.x,
+                "y": d.y,
+                "width": d.width,
+                "height": d.height,
+                "confidence": d.confidence,
+                "class_name": getattr(d, "class_name", ""),
+            }
+            for d in detections
+        ],
+        many=True,
+    )
+    return Response({"detections": out.data, "count": len(detections)})
+
+
+def _draw_boxes_on_image(img_cv, detections, count_label=True):
+    """Draw detection boxes on an image (mutates img_cv in-place)."""
+    h_img, w_img = img_cv.shape[:2]
+    for i, det in enumerate(detections, 1):
+        x1 = int(det.x * w_img)
+        y1 = int(det.y * h_img)
+        x2 = int((det.x + det.width) * w_img)
+        y2 = int((det.y + det.height) * h_img)
+        cv2.rectangle(img_cv, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cls_name = getattr(det, "class_name", "")
+        label = f"{cls_name} #{i}" if cls_name else f"#{i}"
+        conf = getattr(det, "confidence", None)
+        if conf is not None and conf < 1.0:
+            label += f" {conf:.0%}"
+        cv2.putText(
+            img_cv,
+            label,
+            (x1, max(15, y1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (0, 255, 0),
+            1,
+        )
+    if count_label:
+        cv2.putText(
+            img_cv,
+            f"{len(detections)} objetos",
+            (10, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 255, 0),
+            2,
+        )
+    return img_cv
+
+
+def _draw_roi_overlay(img_cv, params):
+    """Draw ROI rectangle and dim the outside region. Does nothing if ROI is the full image."""
+    import numpy as np
+
+    roi_x = int(params.get("roi_x", 0))
+    roi_y = int(params.get("roi_y", 0))
+    roi_w = int(params.get("roi_w", 100))
+    roi_h = int(params.get("roi_h", 100))
+
+    if roi_x == 0 and roi_y == 0 and roi_w >= 100 and roi_h >= 100:
+        return img_cv
+
+    h_img, w_img = img_cv.shape[:2]
+    rx1 = int(round(roi_x / 100.0 * w_img))
+    ry1 = int(round(roi_y / 100.0 * h_img))
+    rx2 = min(w_img, int(round((roi_x + roi_w) / 100.0 * w_img)))
+    ry2 = min(h_img, int(round((roi_y + roi_h) / 100.0 * h_img)))
+
+    overlay = img_cv.copy()
+    cv2.rectangle(overlay, (0, 0), (w_img, ry1), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (0, ry2), (w_img, h_img), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (0, ry1), (rx1, ry2), (0, 0, 0), -1)
+    cv2.rectangle(overlay, (rx2, ry1), (w_img, ry2), (0, 0, 0), -1)
+    img_cv[:] = cv2.addWeighted(overlay, 0.5, img_cv, 0.5, 0)
+    cv2.rectangle(img_cv, (rx1, ry1), (rx2, ry2), (0, 255, 255), 2)
+    return img_cv
+
+
+def _build_debug_mosaic(original_bgr, debug_steps, detections):
+    """Build a labelled grid of intermediate images + final result."""
+    import math
+
+    import numpy as np
+
+    h_orig, w_orig = original_bgr.shape[:2]
+
+    cell_w = min(w_orig, 480)
+    scale = cell_w / w_orig
+    cell_h = int(h_orig * scale)
+
+    panels: list[tuple[str, "np.ndarray"]] = []
+
+    panels.append(("Original", original_bgr))
+
+    for step in debug_steps:
+        panels.append((step.label, step.image))
+
+    result_img = original_bgr.copy()
+    _draw_boxes_on_image(result_img, detections, count_label=False)
+    panels.append((f"Resultado ({len(detections)})", result_img))
+
+    cols = min(4, len(panels))
+    rows = math.ceil(len(panels) / cols)
+    label_h = 28
+    total_cell_h = cell_h + label_h
+    mosaic = np.full((rows * total_cell_h, cols * cell_w, 3), 40, dtype=np.uint8)
+
+    for idx, (label, panel_img) in enumerate(panels):
+        r, c = divmod(idx, cols)
+        y_off = r * total_cell_h
+        x_off = c * cell_w
+
+        if len(panel_img.shape) == 2:
+            panel_bgr = cv2.cvtColor(panel_img, cv2.COLOR_GRAY2BGR)
+        else:
+            panel_bgr = panel_img
+
+        resized = cv2.resize(panel_bgr, (cell_w, cell_h), interpolation=cv2.INTER_AREA)
+        mosaic[y_off : y_off + cell_h, x_off : x_off + cell_w] = resized
+
+        label_y = y_off + cell_h + 20
+        cv2.putText(
+            mosaic,
+            label,
+            (x_off + 6, label_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (220, 220, 220),
+            1,
+            cv2.LINE_AA,
+        )
+
+    return mosaic
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated, IsCompanyMember])
+def filter_preview(request, project_pk, group_pk):
+    """Run a filter on an image and return a preview image (JPEG).
+
+    Modes (sent as ``mode`` in the request body):
+    - ``"result"`` (default): image with green detection boxes drawn on it.
+    - ``"original_boxes"``: original image with translucent boxes (no processing overlays).
+    - ``"debug"``: mosaic grid showing each intermediate processing step.
+    """
+    image_id = request.data.get("image_id")
+    filter_name = request.data.get("filter_name", "")
+    params_raw = request.data.get("params", {})
+    mode = request.data.get("mode", "result")
+
+    if not image_id or not filter_name:
+        return Response(
+            {"detail": "Se requieren image_id y filter_name."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    company_id = request.user.company_id
+
+    try:
+        img_obj = ProjectImage.objects.select_related("group__project").get(
+            pk=image_id,
+            group_id=group_pk,
+            group__project_id=project_pk,
+            deleted_at__isnull=True,
+            group__deleted_at__isnull=True,
+            group__project__company_id=company_id,
+        )
+    except ProjectImage.DoesNotExist:
+        return Response({"detail": "Imagen no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    if not user_can_access_project_image(request.user, img_obj):
+        return Response({"detail": "Imagen no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+    img_path = Path(settings.MEDIA_ROOT) / img_obj.storage_path
+    if not img_path.is_file():
+        return Response(
+            {"detail": "No se encontró el archivo de imagen en disco."},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    from .filters import get_filter
+
+    try:
+        filt = get_filter(filter_name)
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    params = filt.coerce_params(params_raw)
+    img_cv = cv2.imread(str(img_path))
+    from django.http import HttpResponse
+
+    if mode == "debug":
+        result = filt.apply_with_debug(img_path, params)
+        mosaic = _build_debug_mosaic(img_cv, result.debug_steps, result.detections)
+        _, buf = cv2.imencode(".jpg", mosaic, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        resp = HttpResponse(buf.tobytes(), content_type="image/jpeg")
+        resp["X-Detection-Count"] = str(len(result.detections))
+        return resp
+
+    if mode == "original_boxes":
+        import numpy as np
+
+        detections = filt.apply(img_path, params)
+        overlay = img_cv.copy()
+        h_img, w_img = img_cv.shape[:2]
+        for det in detections:
+            x1 = int(det.x * w_img)
+            y1 = int(det.y * h_img)
+            x2 = int((det.x + det.width) * w_img)
+            y2 = int((det.y + det.height) * h_img)
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), -1)
+        alpha = 0.25
+        blended = cv2.addWeighted(overlay, alpha, img_cv, 1 - alpha, 0)
+        _draw_roi_overlay(blended, params)
+        _draw_boxes_on_image(blended, detections)
+        _, buf = cv2.imencode(".jpg", blended, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        resp = HttpResponse(buf.tobytes(), content_type="image/jpeg")
+        resp["X-Detection-Count"] = str(len(detections))
+        return resp
+
+    # mode == "result" (default)
+    detections = filt.apply(img_path, params)
+    _draw_roi_overlay(img_cv, params)
+    _draw_boxes_on_image(img_cv, detections)
+    _, buf = cv2.imencode(".jpg", img_cv, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    resp = HttpResponse(buf.tobytes(), content_type="image/jpeg")
+    resp["X-Detection-Count"] = str(len(detections))
+    return resp
 
 
 class DatasetVersionViewSet(viewsets.ModelViewSet):

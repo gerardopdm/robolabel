@@ -7,3 +7,12 @@
 body {
   @apply bg-slate-50 text-slate-800 antialiased;
 }
+
+/* Centrado estable para <dialog> con showModal() (evita desalineación entre navegadores) */
+.robolabel-dialog {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+}

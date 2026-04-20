@@ -3,27 +3,19 @@ import { useEffect, useRef, type SyntheticEvent } from 'react'
 type Props = {
   open: boolean
   groupName: string
-  variant?: 'list' | 'detail'
+  imageCount: number
   pending?: boolean
+  errorMessage?: string | null
   onClose: () => void
   onConfirm: () => void | Promise<void>
 }
 
-const COPY: Record<
-  'list' | 'detail',
-  (name: string) => string
-> = {
-  list: (name) =>
-    `¿Ocultar el grupo «${name}»? Dejará de mostrarse en la app y sus imágenes no se incluirán en exportaciones ni datasets nuevos. Los datos no se borran del servidor.`,
-  detail: (name) =>
-    `¿Ocultar el grupo «${name}»? Dejará de mostrarse y no se incluirá en exportaciones ni datasets nuevos.`,
-}
-
-export default function HideGroupModal({
+export default function DeleteAllGroupImagesModal({
   open,
   groupName,
-  variant = 'list',
+  imageCount,
   pending = false,
+  errorMessage = null,
   onClose,
   onConfirm,
 }: Props) {
@@ -43,10 +35,6 @@ export default function HideGroupModal({
     if (!pending) onClose()
   }
 
-  async function handleConfirm() {
-    await onConfirm()
-  }
-
   return (
     <dialog
       ref={dialogRef}
@@ -54,10 +42,19 @@ export default function HideGroupModal({
       onCancel={handleCancel}
     >
       <div className="border-b border-slate-200 px-6 py-4">
-        <h2 className="text-lg font-semibold text-slate-800">Ocultar grupo</h2>
+        <h2 className="text-lg font-semibold text-slate-800">Borrar todas las imágenes</h2>
       </div>
       <div className="px-6 py-4">
-        <p className="text-sm leading-relaxed text-slate-600">{COPY[variant](groupName)}</p>
+        <p className="text-sm leading-relaxed text-slate-600">
+          ¿Eliminar las <span className="font-medium tabular-nums">{imageCount}</span> imágenes del grupo{' '}
+          <span className="font-semibold text-slate-800">«{groupName}»</span>? Se quitarán también las anotaciones.
+          Esta acción no se puede deshacer.
+        </p>
+        {errorMessage && (
+          <p className="mt-3 text-sm text-rose-600" role="alert">
+            {errorMessage}
+          </p>
+        )}
       </div>
       <div className="flex justify-end gap-2 border-t border-slate-200 px-6 py-4">
         <button
@@ -70,11 +67,11 @@ export default function HideGroupModal({
         </button>
         <button
           type="button"
-          onClick={() => void handleConfirm()}
+          onClick={() => void onConfirm()}
           disabled={pending}
           className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
         >
-          {pending ? 'Ocultando…' : 'Ocultar'}
+          {pending ? 'Borrando…' : 'Borrar todas'}
         </button>
       </div>
     </dialog>

@@ -238,6 +238,63 @@ nvm use --lts
 
 ---
 
+## Actualización del sistema
+
+Objetivo: traer el código nuevo del repositorio, **reinstalar dependencias** si cambiaron y **aplicar migraciones de Django**. En producción conviene **hacer backup** de base de datos y `media` antes de actualizar.
+
+### Con Docker
+
+1. **Backup (recomendado en producción):** guía paso a paso en [Backup y Restore en Docker](docs/backup-restore-docker.md) (volúmenes `media`, SQLite, PostgreSQL o MySQL). Evita `docker compose down -v` si no quieres borrar datos.
+2. **Actualizar el código** en la máquina donde está el clon (por ejemplo `/opt/robolabel`):
+
+   ```bash
+   cd /opt/robolabel   # o la ruta de tu clon
+   git pull
+   ```
+
+3. **Reconstruir y levantar** la pila con la misma configuración que ya usas (`.env.docker` y perfil de Compose si aplica):
+
+   ```bash
+   ./scripts/docker-up.sh
+   ```
+
+   Ese script ejecuta `docker compose … up -d --build` cargando `.env.docker`. Al arrancar, el backend aplica migraciones en el **entrypoint** del contenedor (`migrate --noinput` en `docker/entrypoint.sh`). Los **volúmenes** (imágenes, SQLite, datos de Postgres/MySQL) se conservan salvo que los elimines explícitamente.
+
+4. **Si el proyecto añade variables nuevas:** compara tu `.env.docker` con [`docker/env.docker.example`](docker/env.docker.example) o vuelve a ejecutar `./scripts/docker-setup.sh` y fusiona los valores (no pierdas contraseñas ni secretos).
+
+5. **Comprobar:** `GET /api/v1/health/` y, si hace falta, `docker compose logs -f backend` (desde la raíz del repo con las variables de entorno cargadas como hace `docker-up.sh`).
+
+### Sin Docker (Linux con `install-linux.sh`)
+
+En la raíz del clon:
+
+```bash
+git pull
+./scripts/install-linux.sh
+```
+
+El script **actualiza** dependencias Python en `backend/.venv`, ejecuta `migrate` y sincroniza dependencias del frontend con `npm ci` (o `npm install` si falla el lock). Usa `--seed` solo si quieres volver a cargar datos demo (puede **sobrescribir** datos de prueba).
+
+### Manual o desarrollo local (B / C / D)
+
+1. `git pull` en la raíz del repositorio.
+2. **Backend:** activa el entorno virtual, instala dependencias y migra:
+
+   ```powershell
+   cd backend
+   .\.venv\Scripts\activate
+   pip install -r requirements.txt
+   python manage.py migrate
+   ```
+
+   En Linux/macOS: `source .venv/bin/activate`.
+
+3. **Frontend:** en `frontend/`, `npm install` (o `npm ci` si trabajas con el lock versionado y está al día).
+
+Si sirves el frontend **compilado** fuera de Vite (por ejemplo detrás de nginx propio), tras actualizar ejecuta `npm run build` y despliega el contenido generado según tu flujo.
+
+---
+
 ## Documentación
 
 - [PRD](docs/PRD.md)
